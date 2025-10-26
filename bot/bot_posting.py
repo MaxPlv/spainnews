@@ -12,6 +12,9 @@ BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Нужно добавить в .env ваш chat_id
 
+# Список разрешенных пользователей (Telegram ID)
+ALLOWED_USERS = [int(x) for x in os.getenv("ALLOWED_USERS", ADMIN_CHAT_ID or "").split(",") if x.strip()]
+
 # Загружаем новости
 def load_news():
     with open("result_news.json", "r", encoding="utf-8") as f:
@@ -71,11 +74,26 @@ async def send_next_news_to_admin(application: Application):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start для ручного запуска"""
+    user_id = update.effective_user.id
+
+    # Проверяем, есть ли пользователь в списке разрешенных
+    if user_id not in ALLOWED_USERS:
+        print(f"⚠️  Попытка доступа от неразрешенного пользователя: {user_id}")
+        return
+
     await update.message.reply_text("🤖 Бот запущен и работает в автоматическом режиме!")
     await send_news_to_admin(context.application)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
+
+    # Проверяем, есть ли пользователь в списке разрешенных
+    if user_id not in ALLOWED_USERS:
+        await query.answer("❌ У вас нет доступа к этому боту", show_alert=True)
+        print(f"⚠️  Попытка взаимодействия от неразрешенного пользователя: {user_id}")
+        return
+
     await query.answer()
 
     news = context.application.bot_data.get("news", [])
