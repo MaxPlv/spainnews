@@ -46,7 +46,7 @@ async def send_next_news_to_admin(application: Application):
         return
 
     n = news[idx]
-    text = f"📰 *{n['title']}*\n\n{n['description']}\n\n[Читать полностью]({n['link']})"
+    text = f"📰 *{n['title']}*\n\n{n['description']}\n\n🔗 [Ссылка на источник]({n['link']})"
 
     keyboard = [
         [
@@ -120,7 +120,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def publish_news(bot, news_item):
     """Публикует новость в канал"""
-    text = f"📰 *{news_item['title']}*\n\n{news_item['description']}\n\n[Ссылка на источник]({news_item['link']})"
+    text = f"📰 *{news_item['title']}*\n\n{news_item['description']}\n\n🔗 [Ссылка на источник]({news_item['link']})"
     await bot.send_message(
         chat_id=CHANNEL_ID,
         text=text,
