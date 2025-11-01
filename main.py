@@ -154,8 +154,7 @@ def main():
         # Запускаем бота (он будет работать постоянно)
         app.run_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True,
-            pool_timeout=30,
+            drop_pending_updates=True
         )
 
     except Exception as e:
