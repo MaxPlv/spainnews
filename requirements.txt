@@ -1,0 +1,9 @@
+python-telegram-bot>=20.0
+apscheduler
+feedparser
+python-dateutil
+beautifulsoup4
+requests
+python-dotenv
+google-genai
+lxml
