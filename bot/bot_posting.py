@@ -15,10 +15,39 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Нужно добавить в .en
 # Список разрешенных пользователей (Telegram ID)
 ALLOWED_USERS = [int(x) for x in os.getenv("ALLOWED_USERS", ADMIN_CHAT_ID or "").split(",") if x.strip()]
 
+# Константы Telegram
+MAX_MESSAGE_LENGTH = 4096
+
 # Загружаем новости
 def load_news():
     with open("result_news.json", "r", encoding="utf-8") as f:
         return json.load(f)
+
+def truncate_text_for_telegram(text, max_length=MAX_MESSAGE_LENGTH):
+    """
+    Обрезает текст до допустимой длины для Telegram, 
+    сохраняя форматирование Markdown и добавляя уведомление об обрезке
+    """
+    if len(text) <= max_length:
+        return text
+
+    # Резервируем место для сообщения об обрезке
+    truncate_suffix = "\n\n... _(текст обрезан из-за ограничений Telegram)_"
+    available_length = max_length - len(truncate_suffix)
+
+    # Обрезаем текст
+    truncated = text[:available_length]
+
+    # Пытаемся обрезать по последнему полному предложению или слову
+    last_period = truncated.rfind('.')
+    last_space = truncated.rfind(' ')
+
+    if last_period > available_length * 0.8:  # Если точка близко к концу
+        truncated = truncated[:last_period + 1]
+    elif last_space > available_length * 0.9:  # Если пробел близко к концу
+        truncated = truncated[:last_space]
+
+    return truncated + truncate_suffix
 
 async def send_news_to_admin(application: Application):
     """Автоматически отправляет новости админу при запуске бота"""
@@ -47,6 +76,9 @@ async def send_next_news_to_admin(application: Application):
 
     n = news[idx]
     text = f"📰 *{n['title']}*\n\n{n['description']}\n\n🔗 [Ссылка на источник]({n['link']})"
+
+    # Проверяем и обрезаем текст, если он слишком длинный
+    text = truncate_text_for_telegram(text)
 
     keyboard = [
         [
@@ -121,6 +153,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def publish_news(bot, news_item):
     """Публикует новость в канал"""
     text = f"📰 *{news_item['title']}*\n\n{news_item['description']}\n\n🔗 [Ссылка на источник]({news_item['link']})"
+
+    # Проверяем и обрезаем текст, если он слишком длинный
+    text = truncate_text_for_telegram(text)
+
     await bot.send_message(
         chat_id=CHANNEL_ID,
         text=text,
