@@ -147,7 +147,7 @@ def rewrite_and_translate_with_gemini(text, is_title=False):
     # (с учетом заголовка, ссылки и форматирования)
     config = types.GenerateContentConfig(
         temperature=0.7,
-        max_output_tokens=2048
+        max_output_tokens=2056
     )
 
     try:
