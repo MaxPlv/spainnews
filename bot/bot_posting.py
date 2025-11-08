@@ -25,8 +25,25 @@ PUBLICATION_MODE = "manual"  # По умолчанию ручной режим
 
 # Загружаем новости
 def load_news():
-    with open("result_news.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Загружает новости из result_news.json"""
+    import os
+    file_path = "result_news.json"
+
+    # Проверяем существование файла
+    if not os.path.exists(file_path):
+        print(f"⚠️ Файл {file_path} не найден")
+        return []
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            news = json.load(f)
+            return news if isinstance(news, list) else []
+    except json.JSONDecodeError:
+        print(f"⚠️ Ошибка чтения {file_path} - неверный формат JSON")
+        return []
+    except Exception as e:
+        print(f"⚠️ Ошибка загрузки новостей: {e}")
+        return []
 
 def validate_news_item(news_item):
     """
@@ -142,6 +159,16 @@ async def process_news_automatically(application: Application):
         print("⚠️  ADMIN_CHAT_ID не установлен в .env")
         return
 
+    # Проверяем, есть ли новости
+    if not news:
+        await application.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text="⚠️ Файл с новостями пуст или не найден.\n\n"
+                 "Сначала запустите обработку новостей через `/start` или дождитесь автоматического запуска по расписанию.",
+            parse_mode="Markdown"
+        )
+        return
+
     valid_news = []
     rejected_news = []
 
@@ -228,6 +255,16 @@ async def send_news_to_admin(application: Application):
 
         if not ADMIN_CHAT_ID:
             print("⚠️  ADMIN_CHAT_ID не установлен в .env")
+            return
+
+        # Проверяем, есть ли новости
+        if not news:
+            await application.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text="⚠️ Файл с новостями пуст или не найден.\n\n"
+                     "Сначала запустите обработку новостей или дождитесь автоматического запуска по расписанию.",
+                parse_mode="Markdown"
+            )
             return
 
         application.bot_data["news"] = news
