@@ -94,17 +94,31 @@ def validate_news_item(news_item):
         }
 
     # Проверка 4: Текст заканчивается не на середине предложения
-    # Проверяем, что после последнего хэштега нет незавершённого текста
-    last_sentence_chars = cleaned_description.rstrip()[-50:]  # Последние 50 символов
-    if not any(last_sentence_chars.endswith(char) for char in ['.', '!', '?', '#']):
-        # Если не заканчивается на знак препинания или хэштег
-        words = last_sentence_chars.split()
-        if len(words) > 3:  # Если есть несколько слов без завершения
-            return {
-                'is_valid': False,
-                'reason': 'Текст обрезан посередине предложения',
-                'cleaned_description': cleaned_description
-            }
+    # Проверяем только если в конце есть текст после последнего хэштега
+    # Разделяем на части до и после хэштегов
+    parts = cleaned_description.split('\n')
+
+    # Ищем последнюю часть с содержательным текстом (не только хэштеги)
+    last_text_part = ""
+    for part in reversed(parts):
+        # Убираем хэштеги из части
+        part_without_hashtags = re.sub(r'#\w+', '', part).strip()
+        if part_without_hashtags:  # Если есть текст помимо хэштегов
+            last_text_part = part_without_hashtags
+            break
+
+    # Если нашли текст, проверяем его окончание
+    if last_text_part:
+        # Проверяем, что текст заканчивается на знак препинания
+        if not any(last_text_part.endswith(char) for char in ['.', '!', '?', '…']):
+            # Дополнительная проверка: если в конце 5+ слов без завершения - явная обрезка
+            last_words = last_text_part.split()[-5:]
+            if len(last_words) >= 5:
+                return {
+                    'is_valid': False,
+                    'reason': 'Текст обрезан посередине предложения',
+                    'cleaned_description': cleaned_description
+                }
 
     # Проверка 5: Текст на русском языке (более 80% кириллицы)
     cyrillic_chars = len(re.findall(r'[а-яА-ЯёЁ]', text_without_hashtags))
