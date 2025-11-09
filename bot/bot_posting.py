@@ -56,7 +56,18 @@ def validate_news_item(news_item):
         'cleaned_description': str (без тега)
     }
     """
+    title = news_item.get("title", "")
     description = news_item.get("description", "")
+
+    # Проверка 0: Заголовок на русском языке (более 80% кириллицы)
+    title_cyrillic_chars = len(re.findall(r'[а-яА-ЯёЁ]', title))
+    title_total_letters = len(re.findall(r'[a-zA-Zа-яА-ЯёЁ]', title))
+    if title_total_letters > 0 and title_cyrillic_chars / title_total_letters < 0.8:
+        return {
+            'is_valid': False,
+            'reason': 'Заголовок не переведен на русский язык',
+            'cleaned_description': description
+        }
 
     # Проверка 1: Наличие тега пригодности
     if "[NOT_SUITABLE]" in description:

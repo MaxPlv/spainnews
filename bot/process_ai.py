@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 import requests
@@ -38,6 +40,7 @@ DUPLICATE_THRESHOLD = 0.8
 INPUT_FILE = "news_raw.json"
 OUTPUT_FILE = "result_news.json"
 IMAGES_DIR = "processed_images"
+RATE_LIMIT_DELAY = 7  # Задержка между запросами к API (секунды) для бесплатного tier
 
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
@@ -127,9 +130,10 @@ def clean_ai_response(text):
 
     return result
 
-def rewrite_and_translate_with_gemini(text, is_title=False):
+def rewrite_and_translate_with_gemini(text, is_title=False, max_retries=3):
     """
     Пересказывает и переводит текст с помощью Gemini API, используя официальный SDK.
+    Включает обработку rate limits с автоматическими повторными попытками.
     """
     try:
         # Клиент автоматически найдет ключ из переменной окружения GEMINI_API_KEY
@@ -167,28 +171,56 @@ def rewrite_and_translate_with_gemini(text, is_title=False):
         max_output_tokens=3500 if not is_title else 100
     )
 
-    try:
-        # Используем модель gemini-1.5-flash
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config=config,
-        )
+    # Попытки с повторами при rate limit
+    for attempt in range(max_retries):
+        try:
+            # Используем модель gemini-2.5-flash
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=config,
+            )
 
-        # SDK возвращает объект с полем .text, которое содержит сгенерированный текст.
-        # Дополнительный парсинг JSON не требуется.
-        if response.text:
-            # Очищаем ответ от вводных фраз
-            cleaned_text = clean_ai_response(response.text)
-            return cleaned_text
+            # SDK возвращает объект с полем .text, которое содержит сгенерированный текст.
+            # Дополнительный парсинг JSON не требуется.
+            if response.text:
+                # Очищаем ответ от вводных фраз
+                cleaned_text = clean_ai_response(response.text)
+                return cleaned_text
 
-        # Если ответ пуст
-        return "Не удалось сгенерировать текст (ответ модели пуст)."
+            # Если ответ пуст
+            return "Не удалось сгенерировать текст (ответ модели пуст)."
 
-    except Exception as e:
-        # Обработка ошибок SDK (например, API_KEY недействителен, лимиты и т.д.)
-        print(f"Ошибка вызова Gemini API через SDK: {e}")
-        raise
+        except Exception as e:
+            error_str = str(e)
+
+            # Проверяем, является ли это ошибкой rate limit (429)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "Quota exceeded" in error_str:
+                # Извлекаем время ожидания из ошибки или используем экспоненциальную задержку
+                if "retry in" in error_str.lower():
+                    # Пытаемся извлечь время ожидания из сообщения
+                    import re
+                    match = re.search(r'retry in ([\d.]+)s', error_str, re.IGNORECASE)
+                    if match:
+                        wait_time = float(match.group(1)) + 0.5  # Добавляем буфер
+                    else:
+                        wait_time = (2 ** attempt) + 1  # Экспоненциальная задержка: 2, 5, 9 секунд
+                else:
+                    wait_time = (2 ** attempt) + 1
+
+                if attempt < max_retries - 1:
+                    print(f"   ⏳ Rate limit достигнут, ожидание {wait_time:.1f} сек... (попытка {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"   ❌ Превышен лимит запросов после {max_retries} попыток")
+                    return "Не удалось сгенерировать текст (превышен лимит API)."
+            else:
+                # Другие ошибки - не повторяем
+                print(f"Ошибка вызова Gemini API через SDK: {e}")
+                raise
+
+    return "Не удалось сгенерировать текст (превышено число попыток)."
 
 def main():
     # Получаем путь к news_raw.json
@@ -225,6 +257,10 @@ def main():
 
         # Обработка заголовка и текста через Gemini
         try:
+            # Добавляем задержку перед первым запросом к API (только после первой новости)
+            if idx > 1:
+                time.sleep(RATE_LIMIT_DELAY)
+
             rewritten_title = rewrite_and_translate_with_gemini(title, is_title=True)
 
             # Загружаем полный текст статьи по ссылке
@@ -240,6 +276,8 @@ def main():
                 text_to_process = f"{title}. {description}"
                 print(f"   ⚠️  Не удалось загрузить полный текст, используем description")
 
+            # Задержка перед вторым запросом к API (для описания)
+            time.sleep(RATE_LIMIT_DELAY)
             rewritten_text = rewrite_and_translate_with_gemini(text_to_process)
 
             # Проверяем, что заголовок и описание не пустые и не содержат ошибки
