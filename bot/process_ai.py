@@ -101,6 +101,33 @@ def clean_ai_response(text):
     """
     Удаляет вводные фразы и мусор из ответа ИИ.
     """
+    result = text.strip()
+
+    # Удаляем блоки THINK/мыслей модели (новое поведение Gemini-2.5)
+    # Эти блоки могут начинаться с THINK, <think>, или других маркеров размышлений
+    if result.startswith("THINK") or result.startswith("<think>"):
+        # Ищем конец блока размышлений и начало реального ответа
+        lines = result.split('\n')
+        clean_lines = []
+        skip_mode = True
+
+        for line in lines:
+            # Пропускаем строки с мыслями модели
+            if skip_mode and (line.strip().startswith("THINK") or
+                            line.strip().startswith("<think>") or
+                            "The user wants" in line or
+                            "I need to" in line or
+                            "Let me" in line):
+                continue
+            # Как только находим содержательную строку, начинаем собирать ответ
+            if line.strip() and not any(marker in line for marker in ["THINK", "<think>", "The user wants", "I need to", "Let me"]):
+                skip_mode = False
+
+            if not skip_mode:
+                clean_lines.append(line)
+
+        result = '\n'.join(clean_lines).strip()
+
     # Список фраз, которые нужно удалить
     phrases_to_remove = [
         "Вот краткая выжимка:",
@@ -116,8 +143,6 @@ def clean_ai_response(text):
         "Вот новость:",
         "Новость:",
     ]
-
-    result = text.strip()
 
     # Удаляем фразы в начале текста
     for phrase in phrases_to_remove:
