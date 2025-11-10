@@ -47,7 +47,7 @@ def extract_image(entry):
     return None
 
 
-def fetch_recent_news(max_age_hours=3):
+def fetch_recent_news(max_age_hours=2):
     now = datetime.now(timezone.utc)
     news_items = []
 

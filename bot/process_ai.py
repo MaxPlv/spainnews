@@ -194,8 +194,8 @@ def rewrite_and_translate_with_gemini(text, is_title=False, max_retries=3):
         except Exception as e:
             error_str = str(e)
 
-            # Проверяем, является ли это ошибкой rate limit (429)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "Quota exceeded" in error_str:
+            # Проверяем, является ли это ошибкой rate limit (429) или сервера перегружен (503)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "Quota exceeded" in error_str or "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower():
                 # Извлекаем время ожидания из ошибки или используем экспоненциальную задержку
                 if "retry in" in error_str.lower():
                     # Пытаемся извлечь время ожидания из сообщения
@@ -209,12 +209,14 @@ def rewrite_and_translate_with_gemini(text, is_title=False, max_retries=3):
                     wait_time = (2 ** attempt) + 1
 
                 if attempt < max_retries - 1:
-                    print(f"   ⏳ Rate limit достигнут, ожидание {wait_time:.1f} сек... (попытка {attempt + 1}/{max_retries})")
+                    error_type = "Rate limit" if "429" in error_str else "Сервер перегружен (503)"
+                    print(f"   ⏳ {error_type}, ожидание {wait_time:.1f} сек... (попытка {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     continue
                 else:
-                    print(f"   ❌ Превышен лимит запросов после {max_retries} попыток")
-                    return "Не удалось сгенерировать текст (превышен лимит API)."
+                    error_reason = "превышен лимит API" if "429" in error_str else "сервер недоступен"
+                    print(f"   ❌ Не удалось обработать после {max_retries} попыток ({error_reason})")
+                    return f"Не удалось сгенерировать текст ({error_reason})."
             else:
                 # Другие ошибки - не повторяем
                 print(f"Ошибка вызова Gemini API через SDK: {e}")

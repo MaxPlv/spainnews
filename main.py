@@ -84,10 +84,10 @@ async def post_init(application: Application):
     # Создаём и запускаем планировщик
     scheduler = AsyncIOScheduler()
 
-    # Добавляем задачу: каждые 3 часа
+    # Добавляем задачу: каждые 2 часа
     scheduler.add_job(
         run_news_pipeline,
-        trigger=CronTrigger(hour="*/3"),
+        trigger=CronTrigger(hour="*/2"),
         id="news_pipeline",
         name="Обработка новостей",
         replace_existing=True
@@ -119,7 +119,7 @@ def main():
     sys.stderr.reconfigure(line_buffering=True)
 
     print("🌟 Запуск системы автоматической обработки новостей", flush=True)
-    print("📅 Расписание: каждые 3 часа", flush=True)
+    print("📅 Расписание: каждые 2 часа", flush=True)
     print("🤖 Бот будет работать постоянно и обрабатывать кнопки\n", flush=True)
 
     # Проверяем соединение с интернетом
@@ -147,8 +147,8 @@ def main():
 
         print("🚀 Запуск бота...\n", flush=True)
         print("✅ Бот запущен и работает!", flush=True)
-        print("📬 Новости будут приходить автоматически каждые 3 часа", flush=True)
-        print("💡 Для немедленного тестирования раскомментируйте строку 103 в main.py", flush=True)
+        print("📬 Новости будут приходить автоматически каждые 2 часа", flush=True)
+        print("💡 Для немедленного тестирования раскомментируйте строку 105 в main.py", flush=True)
         print("🛑 Нажмите Ctrl+C для остановки\n", flush=True)
 
         # Запускаем бота (он будет работать постоянно)
