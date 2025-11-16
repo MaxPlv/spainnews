@@ -23,11 +23,13 @@ def load_news():
     with open("result_news.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
-def truncate_text_for_telegram(text, max_length=MAX_MESSAGE_LENGTH):
+def format_news_text(news_item, max_length=MAX_MESSAGE_LENGTH):
     """
-    Обрезает текст до допустимой длины для Telegram, 
-    сохраняя форматирование Markdown и добавляя уведомление об обрезке
+    Форматирует новость для Telegram с автоматической обрезкой при необходимости
     """
+    text = f"📰 *{news_item['title']}*\n\n{news_item['description']}\n\n🔗 [Ссылка на источник]({news_item['link']})"
+    
+    # Проверяем длину и обрезаем при необходимости
     if len(text) <= max_length:
         return text
 
@@ -75,10 +77,7 @@ async def send_next_news_to_admin(application: Application):
         return
 
     n = news[idx]
-    text = f"📰 *{n['title']}*\n\n{n['description']}\n\n🔗 [Ссылка на источник]({n['link']})"
-
-    # Проверяем и обрезаем текст, если он слишком длинный
-    text = truncate_text_for_telegram(text)
+    text = format_news_text(n)
 
     keyboard = [
         [
@@ -152,10 +151,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def publish_news(bot, news_item):
     """Публикует новость в канал"""
-    text = f"📰 *{news_item['title']}*\n\n{news_item['description']}\n\n🔗 [Ссылка на источник]({news_item['link']})"
-
-    # Проверяем и обрезаем текст, если он слишком длинный
-    text = truncate_text_for_telegram(text)
+    text = format_news_text(news_item)
 
     await bot.send_message(
         chat_id=CHANNEL_ID,

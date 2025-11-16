@@ -38,6 +38,7 @@ if not API_KEY:
 # Настройки
 DUPLICATE_THRESHOLD = 0.8
 RUSSIAN_TEXT_THRESHOLD = 0.8  # Минимум 80% русских символов
+MAX_TELEGRAM_LENGTH = 4000  # Максимальная длина для Telegram (с запасом)
 INPUT_FILE = "news_raw.json"
 OUTPUT_FILE = "result_news.json"
 IMAGES_DIR = "processed_images"
@@ -86,6 +87,18 @@ def has_hashtags(text):
     
     # Должно быть минимум 2 хэштега (по промпту 3-4, но допускаем 2)
     return len(hashtags) >= 2
+
+
+def is_telegram_compatible(title, description, link):
+    """
+    Проверяет, что итоговый текст новости не превысит лимит Telegram.
+    Формат: 📰 *{title}*\n\n{description}\n\n🔗 [Ссылка на источник]({link})
+    """
+    # Формируем текст так же, как это будет в bot_posting.py
+    formatted_text = f"📰 *{title}*\n\n{description}\n\n🔗 [Ссылка на источник]({link})"
+    
+    # Проверяем длину
+    return len(formatted_text) <= MAX_TELEGRAM_LENGTH
 
 
 def fetch_article_content(url):
@@ -297,6 +310,11 @@ def main():
             # Проверяем, что текст содержит хэштеги (признак полного текста)
             if not has_hashtags(rewritten_text):
                 print(f"   ⚠️  Текст не содержит хэштеги (обрезанный/неполный текст), пропускаем новость")
+                continue
+
+            # Проверяем, что итоговый текст не превысит лимит Telegram
+            if not is_telegram_compatible(rewritten_title, rewritten_text, link):
+                print(f"   ⚠️  Текст новости превышает лимит Telegram ({MAX_TELEGRAM_LENGTH} символов), пропускаем новость")
                 continue
 
             print(f"   ✅ Обработано: {rewritten_title[:50]}... / {rewritten_text[:50]}...")
