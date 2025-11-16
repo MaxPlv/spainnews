@@ -207,12 +207,8 @@ if __name__ == "__main__":
         print(f"   🗂️  {[tag['term'] for tag in n['categories']] if n['categories'] else []}")
         print()
 
-    # Добавляем отфильтрованные новости к существующим
-    all_news = existing_news + filtered_news
-
-    # Сохраняем все новости
+    # Сохраняем отфильтрованные новости (перезапись файла)
     with open("news_raw.json", "w", encoding="utf-8") as f:
-        json.dump(all_news, f, ensure_ascii=False, indent=2)
+        json.dump(filtered_news, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Сохранено {len(filtered_news)} новых новостей в news_raw.json")
-    print(f"📊 Всего новостей в базе: {len(all_news)}")
+    print(f"✅ Сохранено {len(filtered_news)} новостей в news_raw.json")
