@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 import requests
@@ -71,6 +72,20 @@ def is_russian_text(text, threshold=RUSSIAN_TEXT_THRESHOLD):
     russian_ratio = russian_count / len(letters)
     
     return russian_ratio >= threshold
+
+
+def has_hashtags(text):
+    """
+    Проверяет, что текст содержит хэштеги в конце (признак полного текста от Gemini).
+    """
+    if not text or not text.strip():
+        return False
+    
+    # Ищем хэштеги (# с последующим текстом без пробелов)
+    hashtags = re.findall(r'#\w+', text)
+    
+    # Должно быть минимум 2 хэштега (по промпту 3-4, но допускаем 2)
+    return len(hashtags) >= 2
 
 
 def fetch_article_content(url):
@@ -277,6 +292,11 @@ def main():
 
             if not is_russian_text(rewritten_text):
                 print(f"   ⚠️  Текст новости содержит менее 80% русских символов, пропускаем новость")
+                continue
+
+            # Проверяем, что текст содержит хэштеги (признак полного текста)
+            if not has_hashtags(rewritten_text):
+                print(f"   ⚠️  Текст не содержит хэштеги (обрезанный/неполный текст), пропускаем новость")
                 continue
 
             print(f"   ✅ Обработано: {rewritten_title[:50]}... / {rewritten_text[:50]}...")
