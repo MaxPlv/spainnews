@@ -47,7 +47,57 @@ def extract_image(entry):
     return None
 
 
-def fetch_recent_news(max_age_hours=3):
+def is_spain_related(text):
+    """Проверяет, связана ли новость с Испанией"""
+    text_lower = text.lower()
+    
+    # Ключевые слова, связанные с Испанией
+    spain_keywords = [
+        'españa', 'español', 'española', 'españoles', 'españolas',
+        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga',
+        'cataluña', 'andalucía', 'país vasco', 'galicia', 'castilla',
+        'gobierno español', 'rey felipe', 'pedro sánchez', 'pp', 'psoe', 'vox',
+        'congreso de los diputados', 'senado español',
+        'españ'  # для поиска производных слов
+    ]
+    
+    return any(keyword in text_lower for keyword in spain_keywords)
+
+
+def is_not_advertisement(text):
+    """Проверяет, что новость не является рекламой"""
+    text_lower = text.lower()
+    
+    # Рекламные маркеры
+    ad_keywords = [
+        'comprar ahora', 'oferta', 'descuento', 'promoción', 'rebaja',
+        'precio especial', 'ahorra', '% de descuento', 'gratis',
+        'patrocinado', 'publicidad', 'anuncio',
+        'suscríbete', 'suscripción', 'prueba gratis',
+        'hasta agotar', 'por tiempo limitado'
+    ]
+    
+    # Если слишком много рекламных слов - это реклама
+    ad_count = sum(1 for keyword in ad_keywords if keyword in text_lower)
+    return ad_count < 2  # Допускаем одно упоминание, но не больше
+
+
+def is_valid_news(news_item):
+    """Проверяет, является ли новость валидной (про Испанию и не реклама)"""
+    title = news_item.get('title', '')
+    description = news_item.get('description', '')
+    
+    # Объединяем заголовок и описание для проверки
+    full_text = f"{title} {description}"
+    
+    # Проверяем оба условия
+    spain_related = is_spain_related(full_text)
+    not_ad = is_not_advertisement(full_text)
+    
+    return spain_related and not_ad
+
+
+def fetch_recent_news(max_age_hours=2):
     now = datetime.now(timezone.utc)
     news_items = []
 
@@ -133,8 +183,22 @@ if __name__ == "__main__":
 
     print(f"✨ Уникальных новостей: {len(unique_news)}\n")
 
+    # Фильтруем новости: оставляем только про Испанию и не рекламные
+    filtered_news = []
+    rejected_count = 0
+
+    for news_item in unique_news:
+        if is_valid_news(news_item):
+            filtered_news.append(news_item)
+        else:
+            rejected_count += 1
+            print(f"❌ Отклонено: {news_item['title'][:60]}...")
+
+    print(f"\n🚫 Отклонено {rejected_count} новостей (не про Испанию или реклама)")
+    print(f"✅ Прошло проверку: {len(filtered_news)} новостей\n")
+
     # Выводим информацию о новостях
-    for n in unique_news:
+    for n in filtered_news:
         print(f"🧩 {n['title']}")
         print(f"   🕒 {n['published']}")
         print(f"   🔗 {n['link']}")
@@ -143,8 +207,12 @@ if __name__ == "__main__":
         print(f"   🗂️  {[tag['term'] for tag in n['categories']] if n['categories'] else []}")
         print()
 
-    # Сохраняем только уникальные новости
-    with open("news_raw.json", "w", encoding="utf-8") as f:
-        json.dump(unique_news, f, ensure_ascii=False, indent=2)
+    # Добавляем отфильтрованные новости к существующим
+    all_news = existing_news + filtered_news
 
-    print("✅ Уникальные новости сохранены в news_raw.json — теперь запусти process_ai.py")
+    # Сохраняем все новости
+    with open("news_raw.json", "w", encoding="utf-8") as f:
+        json.dump(all_news, f, ensure_ascii=False, indent=2)
+
+    print(f"✅ Сохранено {len(filtered_news)} новых новостей в news_raw.json")
+    print(f"📊 Всего новостей в базе: {len(all_news)}")
