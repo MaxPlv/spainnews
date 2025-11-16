@@ -36,6 +36,7 @@ if not API_KEY:
 
 # Настройки
 DUPLICATE_THRESHOLD = 0.8
+RUSSIAN_TEXT_THRESHOLD = 0.8  # Минимум 80% русских символов
 INPUT_FILE = "news_raw.json"
 OUTPUT_FILE = "result_news.json"
 IMAGES_DIR = "processed_images"
@@ -48,6 +49,29 @@ def is_duplicate(title, seen_titles):
         if SequenceMatcher(None, title.lower(), seen.lower()).ratio() > DUPLICATE_THRESHOLD:
             return True
     return False
+
+
+def is_russian_text(text, threshold=RUSSIAN_TEXT_THRESHOLD):
+    """
+    Проверяет, что текст содержит минимум threshold% русских символов.
+    """
+    if not text or not text.strip():
+        return False
+    
+    # Диапазоны кириллических символов (включая русский алфавит)
+    russian_chars = set('абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
+    
+    # Подсчитываем только буквы (исключаем пробелы, знаки препинания, цифры)
+    letters = [char for char in text if char.isalpha()]
+    
+    if not letters:
+        return False
+    
+    russian_count = sum(1 for char in letters if char in russian_chars)
+    russian_ratio = russian_count / len(letters)
+    
+    return russian_ratio >= threshold
+
 
 def fetch_article_content(url):
     """
@@ -244,6 +268,15 @@ def main():
 
             if not rewritten_text or not rewritten_text.strip() or "Не удалось сгенерировать текст" in rewritten_text:
                 print(f"   ⚠️  Пустое или некорректное описание после обработки ИИ, пропускаем новость")
+                continue
+
+            # Проверяем, что текст содержит минимум 80% русских символов
+            if not is_russian_text(rewritten_title):
+                print(f"   ⚠️  Заголовок содержит менее 80% русских символов, пропускаем новость")
+                continue
+
+            if not is_russian_text(rewritten_text):
+                print(f"   ⚠️  Текст новости содержит менее 80% русских символов, пропускаем новость")
                 continue
 
             print(f"   ✅ Обработано: {rewritten_title[:50]}... / {rewritten_text[:50]}...")
