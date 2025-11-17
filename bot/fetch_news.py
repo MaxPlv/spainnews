@@ -97,7 +97,7 @@ def is_valid_news(news_item):
     return spain_related and not_ad
 
 
-def fetch_recent_news(max_age_hours=3):
+def fetch_recent_news(max_age_hours=2):
     now = datetime.now(timezone.utc)
     news_items = []
 
