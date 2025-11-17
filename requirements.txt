@@ -5,8 +5,4 @@ python-dateutil
 beautifulsoup4
 requests
 python-dotenv
-transformers
-torch
-sentencepiece
-protobuf
 lxml

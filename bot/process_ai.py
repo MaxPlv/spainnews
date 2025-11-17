@@ -6,8 +6,6 @@ from difflib import SequenceMatcher
 from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
 
 # Загрузка .env файла
 def load_env_file():
@@ -23,6 +21,9 @@ def load_env_file():
 # Загружаем переменные окружения
 load_env_file()
 
+# Hugging Face API Token (бесплатный)
+HF_API_TOKEN = os.getenv("HUGGING_FACE_API_TOKEN")
+
 # Настройки
 DUPLICATE_THRESHOLD = 0.8
 RUSSIAN_TEXT_THRESHOLD = 0.8
@@ -33,59 +34,41 @@ IMAGES_DIR = "processed_images"
 
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# Глобальные переменные для моделей
-translation_pipe = None
-summarization_pipe = None
-device = None
+# Hugging Face API endpoints
+HF_API_BASE = "https://api-inference.huggingface.co/models/"
+TRANSLATION_ES_EN_MODEL = "Helsinki-NLP/opus-mt-es-en"
+TRANSLATION_EN_RU_MODEL = "Helsinki-NLP/opus-mt-en-ru"
+SUMMARIZATION_MODEL = "facebook/bart-large-cnn"
 
-def init_models():
-    """Инициализация моделей Hugging Face"""
-    global translation_pipe, summarization_pipe, device
+def query_huggingface_api(model_name, payload, max_retries=3):
+    """Отправляет запрос к Hugging Face Inference API"""
+    api_url = f"{HF_API_BASE}{model_name}"
+    headers = {}
 
-    print("🤖 Инициализация моделей Hugging Face...")
+    if HF_API_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
 
-    # Определяем устройство (CPU для railway.app)
-    device = 0 if torch.cuda.is_available() else -1
-    device_name = "GPU" if device == 0 else "CPU"
-    print(f"   📱 Используется устройство: {device_name}")
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(api_url, headers=headers, json=payload, timeout=30)
 
-    try:
-        # Модель для перевода (Helsinki-NLP opus-mt)
-        # Маленькая и эффективная модель для испанский -> английский
-        print("   📥 Загрузка модели перевода (es->en)...")
-        translation_model_name = "Helsinki-NLP/opus-mt-es-en"
-        translation_pipe = pipeline(
-            "translation",
-            model=translation_model_name,
-            device=device,
-            max_length=512
-        )
+            if response.status_code == 503:
+                # Модель загружается
+                print(f"   ⏳ Модель загружается, ожидание {10 * (attempt + 1)} сек...")
+                time.sleep(10 * (attempt + 1))
+                continue
 
-        # Модель для перевода английский -> русский
-        print("   📥 Загрузка модели перевода (en->ru)...")
-        translation_en_ru_name = "Helsinki-NLP/opus-mt-en-ru"
-        translation_en_ru_pipe = pipeline(
-            "translation",
-            model=translation_en_ru_name,
-            device=device,
-            max_length=512
-        )
+            response.raise_for_status()
+            return response.json()
 
-        # Модель для суммаризации (на английском, компактная)
-        print("   📥 Загрузка модели суммаризации...")
-        summarization_model_name = "facebook/bart-large-cnn"
-        summarization_pipe = pipeline(
-            "summarization",
-            model=summarization_model_name,
-            device=device
-        )
+        except requests.exceptions.RequestException as e:
+            print(f"   ⚠️  Ошибка API (попытка {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))
+            else:
+                raise
 
-        print("   ✅ Модели успешно загружены")
-        return translation_pipe, translation_en_ru_pipe, summarization_pipe
-
-    except Exception as e:
-        print(f"   ❌ Ошибка загрузки моделей: {e}")
-        raise
+    return None
 
 def is_duplicate(title, seen_titles):
     """Проверяет, является ли заголовок дубликатом"""
@@ -158,7 +141,7 @@ def fetch_article_content(url):
             paragraphs = soup.find_all('p')
             article_text = ' '.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-        return article_text[:8000] if article_text else ""
+        return article_text[:5000] if article_text else ""
 
     except Exception as e:
         print(f"   ⚠️  Ошибка загрузки статьи: {e}")
@@ -183,101 +166,112 @@ def split_text_into_chunks(text, max_length=400):
 
     return chunks
 
-def translate_and_summarize(text, is_title=False, translation_es_en_pipe=None,
-                           translation_en_ru_pipe=None, summarization_pipe=None,
-                           max_retries=3):
+def translate_es_to_en(text):
+    """Переводит с испанского на английский"""
+    print(f"   🔄 Перевод es→en...")
+    result = query_huggingface_api(
+        TRANSLATION_ES_EN_MODEL,
+        {"inputs": text}
+    )
+
+    if result and isinstance(result, list) and len(result) > 0:
+        return result[0].get('translation_text', '')
+    return ""
+
+def translate_en_to_ru(text):
+    """Переводит с английского на русский"""
+    print(f"   🔄 Перевод en→ru...")
+
+    # Разбиваем на части, если текст длинный
+    chunks = split_text_into_chunks(text, max_length=400)
+    translated_chunks = []
+
+    for chunk in chunks:
+        result = query_huggingface_api(
+            TRANSLATION_EN_RU_MODEL,
+            {"inputs": chunk}
+        )
+
+        if result and isinstance(result, list) and len(result) > 0:
+            translated_chunks.append(result[0].get('translation_text', ''))
+        time.sleep(1)
+
+    return " ".join(translated_chunks)
+
+def summarize_text(text):
+    """Суммаризирует текст на английском"""
+    print(f"   📝 Суммаризация...")
+
+    # Ограничиваем длину для API
+    text = text[:2000]
+
+    result = query_huggingface_api(
+        SUMMARIZATION_MODEL,
+        {
+            "inputs": text,
+            "parameters": {
+                "max_length": 300,
+                "min_length": 100,
+                "do_sample": False
+            }
+        }
+    )
+
+    if result and isinstance(result, list) and len(result) > 0:
+        return result[0].get('summary_text', '')
+    return ""
+
+def translate_and_summarize(text, is_title=False):
     """
-    Переводит и суммаризирует текст с помощью HuggingFace Transformers.
+    Переводит и суммаризирует текст через Hugging Face API.
     Схема: Испанский -> Английский -> Суммаризация -> Русский
     """
-    for attempt in range(max_retries):
-        try:
-            if is_title:
-                # Для заголовка просто переводим напрямую
-                print(f"   🔄 Перевод заголовка (es->en->ru)...")
+    try:
+        if is_title:
+            # Для заголовка просто переводим
+            en_text = translate_es_to_en(text)
+            time.sleep(1)
 
-                # Шаг 1: Испанский -> Английский
-                en_result = translation_es_en_pipe(text, max_length=100)
-                en_text = en_result[0]['translation_text']
+            ru_text = translate_en_to_ru(en_text)
+            return ru_text.strip()
+        else:
+            # Для текста: переводим, суммаризируем, переводим на русский
+            chunks = split_text_into_chunks(text, max_length=400)
+            en_chunks = []
 
-                time.sleep(0.5)
+            for i, chunk in enumerate(chunks[:10]):  # Максимум 10 частей
+                if i > 0:
+                    time.sleep(1)
+                en_text = translate_es_to_en(chunk)
+                if en_text:
+                    en_chunks.append(en_text)
 
-                # Шаг 2: Английский -> Русский
-                ru_result = translation_en_ru_pipe(en_text, max_length=100)
-                translated_text = ru_result[0]['translation_text']
+            en_full_text = " ".join(en_chunks)
+            time.sleep(2)
 
-                return translated_text.strip()
-            else:
-                # Для текста: переводим, суммаризируем, переводим на русский
-                print(f"   🔄 Перевод текста (es->en)...")
+            # Суммаризация
+            summary = summarize_text(en_full_text)
+            if not summary:
+                # Если суммаризация не удалась, используем начало текста
+                summary = en_full_text[:500]
 
-                # Разбиваем текст на части, если он слишком длинный
-                chunks = split_text_into_chunks(text, max_length=400)
-                en_chunks = []
+            time.sleep(2)
 
-                for i, chunk in enumerate(chunks):
-                    if i > 0:
-                        time.sleep(0.5)  # Небольшая задержка между запросами
-                    result = translation_es_en_pipe(chunk, max_length=512)
-                    en_chunks.append(result[0]['translation_text'])
+            # Перевод на русский
+            ru_text = translate_en_to_ru(summary)
 
-                en_text = " ".join(en_chunks)
+            # Добавляем хэштеги
+            hashtags = generate_hashtags(text)
+            final_text = f"{ru_text}\n\n{hashtags}"
 
-                # Ограничиваем длину для суммаризации
-                en_text = en_text[:3000]
+            return final_text.strip()
 
-                print(f"   📝 Суммаризация текста...")
-                time.sleep(0.5)
-
-                # Суммаризация на английском
-                summary = summarization_pipe(
-                    en_text,
-                    max_length=300,
-                    min_length=100,
-                    do_sample=False
-                )
-                summarized_text = summary[0]['summary_text']
-
-                print(f"   🔄 Перевод суммаризации (en->ru)...")
-                time.sleep(0.5)
-
-                # Переводим суммаризацию на русский по частям
-                summary_chunks = split_text_into_chunks(summarized_text, max_length=400)
-                ru_chunks = []
-
-                for i, chunk in enumerate(summary_chunks):
-                    if i > 0:
-                        time.sleep(0.5)
-                    result = translation_en_ru_pipe(chunk, max_length=512)
-                    ru_chunks.append(result[0]['translation_text'])
-
-                final_text = " ".join(ru_chunks)
-
-                # Добавляем хэштеги (извлекаем ключевые слова)
-                hashtags = generate_hashtags(text)
-                final_text = f"{final_text}\n\n{hashtags}"
-
-                return final_text.strip()
-
-        except Exception as e:
-            error_msg = str(e)
-            print(f"   ⚠️  Ошибка при попытке {attempt + 1}/{max_retries}: {error_msg[:100]}")
-
-            if attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 5
-                print(f"   ⏳ Повторная попытка через {wait_time} секунд...")
-                time.sleep(wait_time)
-            else:
-                raise Exception(f"Не удалось обработать текст после {max_retries} попыток")
-
-    return "Не удалось обработать текст"
+    except Exception as e:
+        print(f"   ❌ Ошибка обработки текста: {e}")
+        raise
 
 def generate_hashtags(text):
     """Генерирует хэштеги на основе ключевых слов"""
-    # Простой подход: берём наиболее частые существительные
-    keywords = ['España', 'Испания', 'Valencia', 'Madrid', 'Barcelona',
-                'Gobierno', 'Economía', 'Política', 'Sociedad']
-
     found_tags = []
     text_lower = text.lower()
 
@@ -287,12 +281,14 @@ def generate_hashtags(text):
         found_tags.append('#Валенсия')
     if 'madrid' in text_lower:
         found_tags.append('#Мадрид')
+    if 'barcelona' in text_lower:
+        found_tags.append('#Барселона')
     if 'gobierno' in text_lower or 'política' in text_lower or 'government' in text_lower:
         found_tags.append('#Политика')
     if 'economía' in text_lower or 'economy' in text_lower:
         found_tags.append('#Экономика')
 
-    # Если меньше 3 хэштегов, добавляем дефолтные
+    # Дефолтные теги
     if len(found_tags) < 3:
         default_tags = ['#ЖизньВИспании', '#НовостиИспании', '#España']
         for tag in default_tags:
@@ -311,14 +307,16 @@ def main():
         print(f"❌ Файл {INPUT_FILE} не найден. Сначала запустите fetch_news.py")
         return
 
-    # Инициализируем модели
-    translation_es_en, translation_en_ru, summarization = init_models()
-
-    print(f"\n📂 Загрузка новостей из {INPUT_FILE}...")
+    print(f"📂 Загрузка новостей из {INPUT_FILE}...")
     with open(input_path, 'r', encoding='utf-8') as f:
         news_items = json.load(f)
 
     print(f"✅ Загружено {len(news_items)} новостей")
+
+    if HF_API_TOKEN:
+        print(f"🔑 Используется Hugging Face API Token")
+    else:
+        print(f"⚠️  Hugging Face API Token не найден, используется публичное API (могут быть ограничения)")
 
     processed_news = []
     seen_titles = []
@@ -337,15 +335,8 @@ def main():
 
         try:
             print(f"   🤖 Обработка заголовка...")
-            rewritten_title = translate_and_summarize(
-                title,
-                is_title=True,
-                translation_es_en_pipe=translation_es_en,
-                translation_en_ru_pipe=translation_en_ru,
-                summarization_pipe=summarization
-            )
-
-            time.sleep(2)
+            rewritten_title = translate_and_summarize(title, is_title=True)
+            time.sleep(3)
 
             link = news.get("link", "")
             print(f"   🔗 Загрузка полного текста статьи...")
@@ -359,14 +350,8 @@ def main():
                 print(f"   ⚠️  Используем description")
 
             print(f"   🤖 Обработка текста...")
-            rewritten_text = translate_and_summarize(
-                text_to_process,
-                translation_es_en_pipe=translation_es_en,
-                translation_en_ru_pipe=translation_en_ru,
-                summarization_pipe=summarization
-            )
-
-            time.sleep(2)
+            rewritten_text = translate_and_summarize(text_to_process)
+            time.sleep(3)
 
             if not rewritten_title or not rewritten_title.strip():
                 print(f"   ⚠️  Пустой заголовок, пропускаем")
