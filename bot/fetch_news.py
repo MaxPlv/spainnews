@@ -54,10 +54,10 @@ def is_spain_related(text):
     # Ключевые слова, связанные с Испанией
     spain_keywords = [
         'españa', 'español', 'española', 'españoles', 'españolas',
-        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga',
+        'madrid', 'barcelona', 'valencia', 'valència', 'sevilla', 'zaragoza', 'málaga',
         'cataluña', 'andalucía', 'país vasco', 'galicia', 'castilla',
         'gobierno español', 'rey felipe', 'pedro sánchez', 'pp', 'psoe', 'vox',
-        'congreso de los diputados', 'senado español',
+        'congreso de los diputados', 'senado español', 'puigdemont', 'palma'
         'españ'  # для поиска производных слов
     ]
     
