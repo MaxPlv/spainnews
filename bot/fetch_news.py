@@ -54,10 +54,10 @@ def is_spain_related(text):
     # Ключевые слова, связанные с Испанией
     spain_keywords = [
         'españa', 'español', 'española', 'españoles', 'españolas',
-        'madrid', 'barcelona', 'valencia', 'valència', 'sevilla', 'zaragoza', 'málaga',
+        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga',
         'cataluña', 'andalucía', 'país vasco', 'galicia', 'castilla',
         'gobierno español', 'rey felipe', 'pedro sánchez', 'pp', 'psoe', 'vox',
-        'congreso de los diputados', 'senado español', 'puigdemont', 'palma'
+        'congreso de los diputados', 'senado español',
         'españ'  # для поиска производных слов
     ]
     
@@ -65,21 +65,40 @@ def is_spain_related(text):
 
 
 def is_not_advertisement(text):
-    """Проверяет, что новость не является рекламой"""
+    """Проверяет, что новость не является рекламой (улучшенная версия)"""
     text_lower = text.lower()
     
-    # Рекламные маркеры
-    ad_keywords = [
-        'comprar ahora', 'oferta', 'descuento', 'promoción', 'rebaja',
-        'precio especial', 'ahorra', '% de descuento', 'gratis',
-        'patrocinado', 'publicidad', 'anuncio',
-        'suscríbete', 'suscripción', 'prueba gratis',
-        'hasta agotar', 'por tiempo limitado'
+    # Сильные рекламные маркеры (если есть хотя бы один - точно реклама)
+    strong_ad_keywords = [
+        'comprar ahora', 'compra ahora', 'cómpralo',
+        'haz clic aquí', 'pincha aquí',
+        'solicita', 'solicitud gratuita',
+        'llama ahora', 'contacta ahora',
+        'visita nuestra tienda',
+        'añadir al carrito',
+        'pagar ahora',
     ]
     
-    # Если слишком много рекламных слов - это реклама
-    ad_count = sum(1 for keyword in ad_keywords if keyword in text_lower)
-    return ad_count < 2  # Допускаем одно упоминание, но не больше
+    # Слабые рекламные маркеры (нужно несколько)
+    weak_ad_keywords = [
+        'oferta', 'descuento', 'promoción', 'rebaja',
+        'precio especial', 'precio reducido',
+        'ahorra', '% de descuento', 'gratis',
+        'patrocinado', 'publicidad', 'anuncio',
+        'suscríbete', 'suscripción', 'prueba gratis',
+        'hasta agotar', 'por tiempo limitado',
+        'liquidación', 'outlet', 'chollazo',
+    ]
+    
+    # Если есть сильный маркер - это реклама
+    if any(keyword in text_lower for keyword in strong_ad_keywords):
+        return False
+    
+    # Считаем слабые маркеры
+    weak_count = sum(1 for keyword in weak_ad_keywords if keyword in text_lower)
+    
+    # Если больше 2 слабых маркеров - скорее всего реклама
+    return weak_count < 3
 
 
 def is_valid_news(news_item):
@@ -186,15 +205,37 @@ if __name__ == "__main__":
     # Фильтруем новости: оставляем только про Испанию и не рекламные
     filtered_news = []
     rejected_count = 0
+    rejected_reasons = {
+        'not_spain': 0,
+        'advertisement': 0,
+        'both': 0
+    }
 
     for news_item in unique_news:
-        if is_valid_news(news_item):
+        spain_related = is_spain_related(f"{news_item['title']} {news_item['description']}")
+        not_ad = is_not_advertisement(f"{news_item['title']} {news_item['description']}")
+        
+        if spain_related and not_ad:
             filtered_news.append(news_item)
         else:
             rejected_count += 1
-            print(f"❌ Отклонено: {news_item['title'][:60]}...")
+            # Определяем причину отклонения
+            if not spain_related and not not_ad:
+                rejected_reasons['both'] += 1
+                reason = "не про Испанию + реклама"
+            elif not spain_related:
+                rejected_reasons['not_spain'] += 1
+                reason = "не про Испанию"
+            else:
+                rejected_reasons['advertisement'] += 1
+                reason = "реклама"
+            
+            print(f"❌ Отклонено ({reason}): {news_item['title'][:60]}...")
 
-    print(f"\n🚫 Отклонено {rejected_count} новостей (не про Испанию или реклама)")
+    print(f"\n🚫 Отклонено {rejected_count} новостей:")
+    print(f"   📍 Не про Испанию: {rejected_reasons['not_spain']}")
+    print(f"   🛒 Реклама: {rejected_reasons['advertisement']}")
+    print(f"   ⚠️  Оба критерия: {rejected_reasons['both']}")
     print(f"✅ Прошло проверку: {len(filtered_news)} новостей\n")
 
     # Выводим информацию о новостях
