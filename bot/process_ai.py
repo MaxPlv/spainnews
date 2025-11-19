@@ -49,7 +49,7 @@ BASE_RETRY_DELAY = 5  # базовая задержка для экспонен�
 MAX_RETRIES = 5
 
 # Модели в порядке приоритета (fallback-ready)
-FALLBACK_MODELS = [
+MODEL_FALLBACKS = [
     "gemini-2.5-flash",
     "gemini-2.0-pro",
     "gemini-2.0-flash",
