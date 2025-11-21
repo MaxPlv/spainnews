@@ -6,8 +6,8 @@ from bs4 import BeautifulSoup
 
 # RSS источники
 RSS_FEEDS = [
-    "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
-    "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml"
+    "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml",
+    "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
     # можно добавить ещё
 ]
 
@@ -53,12 +53,22 @@ def is_spain_related(text):
     
     # Ключевые слова, связанные с Испанией
     spain_keywords = [
-        'españa', 'español', 'española', 'españoles', 'españolas',
-        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga',
-        'cataluña', 'andalucía', 'país vasco', 'galicia', 'castilla',
-        'gobierno español', 'rey felipe', 'pedro sánchez', 'pp', 'psoe', 'vox',
-        'congreso de los diputados', 'senado español',
-        'españ'  # для поиска производных слов
+         # страны/города
+        "españ", "españa", "madrid", 'valéncia', "barcelona", "valencia", "sevilla", "zaragoza", "bilbao",
+        "andalucía", "cataluña", "galicia", "pais vasco", "comunidad valenciana",
+        "castilla", "navarra", "murcia", "asturias", "cantabria",
+
+        # органы власти
+        "gobierno", "ayuntamiento", "comunidad autónoma",
+        "policía nacional", "guardia civil", "tribunal supremo",
+        "audiencia nacional", "seguridad social", "hacienda",
+
+        # испанские компании
+        "bbva", "santander", "caixabank", "iberdrola", "repsol", "endesa",
+
+        # политика
+        "psoe", "pp", "vox", "sumar", "podemos", "erc", "junts",
+        "sánchez", "ayuso", "feijóo", "abascal", "yolanda díaz",
     ]
     
     return any(keyword in text_lower for keyword in spain_keywords)

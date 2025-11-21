@@ -39,7 +39,9 @@ DUPLICATE_THRESHOLD = 0.8
 RUSSIAN_TEXT_THRESHOLD = 0.8
 MAX_TELEGRAM_LENGTH = 4000
 INPUT_FILE = "news_raw.json"
+
 OUTPUT_FILE = "result_news.json"
+REJECTED_FILE = "rejected_news.json"
 IMAGES_DIR = "processed_images"
 CACHE_FILE = "gemini_cache.json"
 
@@ -296,6 +298,7 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
 def main():
     input_path = Path(__file__).parent.parent / INPUT_FILE
     output_path = Path(__file__).parent.parent / OUTPUT_FILE
+    rejected_path = Path(__file__).parent.parent / REJECTED_FILE
 
     if not input_path.exists():
         print(f"❌ Файл {INPUT_FILE} не найден.")
@@ -311,6 +314,7 @@ def main():
     print(f"📂 Загружено {len(news_items)} новостей")
 
     processed_news = []
+    rejected_news = []
     seen_titles = []
     cache = load_cache()
 
@@ -323,6 +327,7 @@ def main():
 
         if is_duplicate(title, seen_titles):
             print("   ⚠️ Дубликат, пропускаем")
+            rejected_news.append({"title": title, "reason": "duplicate"})
             continue
         seen_titles.append(title)
 
@@ -346,6 +351,7 @@ def main():
             ai_result = gemini_request_single_json(text_for_model)
         except Exception as e:
             print(f"   ❌ Проблема с Gemini: {e}")
+            rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
             continue
 
         # Формируем итоговые поля (сохраняем в прежнем формате)
@@ -356,18 +362,23 @@ def main():
         # Валидации как раньше
         if not rewritten_title:
             print("   ⚠️ Пустой заголовок от модели, пропускаем")
+            rejected_news.append({"title": title, "reason": "empty_title"})
             continue
         if not rewritten_text:
             print("   ⚠️ Пустой summary от модели, пропускаем")
+            rejected_news.append({"title": title, "reason": "empty_summary"})
             continue
         if not is_russian_text(rewritten_title):
             print("   ⚠️ Заголовок не на русском >=80%, пропускаем")
+            rejected_news.append({"title": title, "reason": "not_russian_title"})
             continue
         if not is_russian_text(rewritten_text):
             print("   ⚠️ Текст не на русском >=80%, пропускаем")
+            rejected_news.append({"title": title, "reason": "not_russian_text"})
             continue
         if not hashtags or len(hashtags) < 2:
             print("   ⚠️ Мало хэштегов, пропускаем")
+            rejected_news.append({"title": title, "reason": "few_hashtags"})
             continue
         # Добавляем хэштеги в конец summary, если их нет
         if not re.search(r'#\w+', rewritten_text):
@@ -375,6 +386,7 @@ def main():
 
         if not is_telegram_compatible(rewritten_title, rewritten_text, link):
             print("   ⚠️ Превышает лимит Telegram, пропускаем")
+            rejected_news.append({"title": title, "reason": "telegram_limit"})
             continue
 
         print(f"   ✅ ОК: {rewritten_title[:60]} / summary {len(rewritten_text)} chars / tags {len(hashtags)}")
@@ -393,6 +405,12 @@ def main():
     print(f"\n💾 Сохранение {len(processed_news)} обработанных новостей в {OUTPUT_FILE}...")
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(processed_news, f, ensure_ascii=False, indent=2)
+    
+    # Сохраняем отклоненные
+    print(f"💾 Сохранение {len(rejected_news)} отклоненных новостей в {REJECTED_FILE}...")
+    with open(rejected_path, 'w', encoding='utf-8') as f:
+        json.dump(rejected_news, f, ensure_ascii=False, indent=2)
+
     print("✅ Готово.")
 
 if __name__ == "__main__":

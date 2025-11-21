@@ -14,7 +14,7 @@ load_dotenv()
 
 # Импортируем функции из бота
 sys.path.append(str(Path(__file__).parent / "bot"))
-from bot.bot_posting import send_news_to_admin, button_handler, start
+from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")  # Опционально для прокси
@@ -34,7 +34,7 @@ async def run_news_pipeline():
     try:
         # Шаг 1: Собираем новости
         print("📥 Шаг 1/3: Сбор новостей из RSS...")
-        result = subprocess.run(
+        result = await asyncio.to_thread(subprocess.run, 
             [sys.executable, "bot/fetch_news.py"],
             capture_output=True,
             text=True,
@@ -45,7 +45,7 @@ async def run_news_pipeline():
 
         # Шаг 2: Обрабатываем через AI
         print("🤖 Шаг 2/3: Обработка новостей через Gemini AI...")
-        result = subprocess.run(
+        result = await asyncio.to_thread(subprocess.run,
             [sys.executable, "bot/process_ai.py"],
             capture_output=True,
             text=True,
@@ -57,8 +57,17 @@ async def run_news_pipeline():
         # Шаг 3: Отправляем новости админу через работающего бота
         print("📬 Шаг 3/3: Отправка новостей в Telegram...")
         if bot_app:
-            await send_news_to_admin(bot_app)
-            print("✅ Новости отправлены\n")
+            settings = load_settings()
+            mode = settings.get("mode", "manual")
+            
+            if mode == "auto":
+                print("🤖 Режим: АВТОМАТИЧЕСКИЙ")
+                await schedule_auto_posting(bot_app)
+            else:
+                print("👤 Режим: РУЧНОЙ")
+                await send_news_to_admin(bot_app)
+                
+            print("✅ Новости отправлены/запланированы\n")
         else:
             print("⚠️ Бот не запущен\n")
 

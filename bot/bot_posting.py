@@ -23,6 +23,26 @@ def load_news():
     with open("result_news.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
+def load_rejected_news():
+    try:
+        with open("rejected_news.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
+SETTINGS_FILE = "settings.json"
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"mode": "manual"}
+
+def save_settings(settings):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+
 def format_news_text(news_item, max_length=MAX_MESSAGE_LENGTH):
     """
     Форматирует новость для Telegram с автоматической обрезкой при необходимости
@@ -64,7 +84,70 @@ async def send_news_to_admin(application: Application):
 
     await send_next_news_to_admin(application)
 
-async def send_next_news_to_admin(application: Application):
+
+
+async def schedule_auto_posting(application: Application):
+    """Планирует автоматическую публикацию новостей"""
+    news = load_news()
+    rejected = load_rejected_news()
+    
+    if not news:
+        if ADMIN_CHAT_ID:
+            await application.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"ℹ️ Нет новостей для публикации.\n🚫 Отклонено: {len(rejected)}"
+            )
+        return
+
+    # Формула: 2 часа / (количество новостей + 2)
+    # 2 часа = 120 минут
+    interval_minutes = 120 / (len(news) + 2)
+    
+    scheduler = application.bot_data.get("scheduler")
+    if not scheduler:
+        print("⚠️ Scheduler not found in bot_data")
+        return
+
+    # Очищаем старые задачи публикации (если есть)
+    for job in scheduler.get_jobs():
+        if job.id.startswith("auto_post_"):
+            job.remove()
+
+    scheduled_info = []
+    now = datetime.now()
+    
+    for i, item in enumerate(news):
+        run_date = now + timedelta(minutes=interval_minutes * (i + 1))
+        job_id = f"auto_post_{i}"
+        
+        scheduler.add_job(
+            publish_news,
+            'date',
+            run_date=run_date,
+            args=[application.bot, item],
+            id=job_id
+        )
+        scheduled_info.append(f"{i+1}. {item['title'][:30]}... в {run_date.strftime('%H:%M')}")
+
+    # Отчет админу
+    if ADMIN_CHAT_ID:
+        rejected_summary = "\n".join([f"- {r['title'][:30]}... ({r['reason']})" for r in rejected[:5]])
+        if len(rejected) > 5:
+            rejected_summary += f"\n... и еще {len(rejected) - 5}"
+            
+        report = (
+            f"🤖 *Автоматический режим*\n\n"
+            f"✅ Одобрено: {len(news)}\n"
+            f"🚫 Отклонено: {len(rejected)}\n\n"
+            f"📅 *Расписание публикации:*\n" + "\n".join(scheduled_info) + "\n\n"
+            f"🗑 *Причины отклонения (топ-5):*\n{rejected_summary if rejected else 'Нет отклоненных новостей'}"
+        )
+        
+        await application.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=report,
+            parse_mode="Markdown"
+        )
     """Отправляет следующую новость админу"""
     news = application.bot_data.get("news", [])
     idx = application.bot_data.get("index", 0)
@@ -112,8 +195,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"⚠️  Попытка доступа от неразрешенного пользователя: {user_id}")
         return
 
-    await update.message.reply_text("🤖 Бот запущен и работает в автоматическом режиме!")
-    await send_news_to_admin(context.application)
+    settings = load_settings()
+    current_mode = settings.get("mode", "manual")
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(f"{'✅ ' if current_mode == 'manual' else ''}Ручной режим", callback_data="mode_manual"),
+            InlineKeyboardButton(f"{'✅ ' if current_mode == 'auto' else ''}Автоматический", callback_data="mode_auto"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"🤖 Бот управления новостями\nТекущий режим: *{current_mode}*", 
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+    
+    if current_mode == "manual":
+        await send_news_to_admin(context.application)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -129,6 +229,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     news = context.application.bot_data.get("news", [])
     idx = context.application.bot_data.get("index", 0)
+    
+    # Обработка смены режима
+    if query.data.startswith("mode_"):
+        new_mode = query.data.split("_")[1]
+        settings = load_settings()
+        settings["mode"] = new_mode
+        save_settings(settings)
+        
+        keyboard = [
+            [
+                InlineKeyboardButton(f"{'✅ ' if new_mode == 'manual' else ''}Ручной режим", callback_data="mode_manual"),
+                InlineKeyboardButton(f"{'✅ ' if new_mode == 'auto' else ''}Автоматический", callback_data="mode_auto"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"🤖 Бот управления новостями\nТекущий режим: *{new_mode}*\n\n✅ Режим изменен!",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
+
     n = news[idx]
 
     if query.data == "skip":
@@ -167,8 +290,10 @@ async def schedule_post(context, news_item, delay_minutes):
 
 async def post_init(application: Application):
     """Автоматически запускается после инициализации бота"""
-    print("✅ Бот инициализирован, отправка новостей...")
-    await send_news_to_admin(application)
+
+    print("✅ Бот инициализирован")
+    # При старте ничего не делаем, ждем команды или шедулера
+    # await send_news_to_admin(application)
 
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
