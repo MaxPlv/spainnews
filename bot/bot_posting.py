@@ -151,6 +151,7 @@ async def schedule_auto_posting(application: Application):
             text=report,
             parse_mode="Markdown"
         )
+async def send_next_news_to_admin(application: Application):
     """Отправляет следующую новость админу"""
     news = application.bot_data.get("news", [])
     idx = application.bot_data.get("index", 0)
