@@ -20,8 +20,11 @@ MAX_MESSAGE_LENGTH = 4096
 
 # Загружаем новости
 def load_news():
-    with open("result_news.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open("result_news.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
 
 def load_rejected_news():
     try:
@@ -151,6 +154,13 @@ async def schedule_auto_posting(application: Application):
     """Отправляет следующую новость админу"""
     news = application.bot_data.get("news", [])
     idx = application.bot_data.get("index", 0)
+
+    if not news:
+        await application.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text="ℹ️ Нет новостей для проверки."
+        )
+        return
 
     if idx >= len(news):
         await application.bot.send_message(
