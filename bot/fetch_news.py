@@ -3,6 +3,7 @@ import json
 from dateutil import parser as dateparser
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
+from url_tracker import URLTracker
 
 # RSS источники
 RSS_FEEDS = [
@@ -170,46 +171,36 @@ def fetch_recent_news(max_age_hours=2):
     return news_items
 
 
-def remove_duplicates(new_news, existing_news):
-    """Удаляет дубликаты из новых новостей, проверяя по ссылке на оригинал"""
-    # Создаём set из ссылок существующих новостей
-    existing_links = {item['link'] for item in existing_news if 'link' in item}
 
-    # Фильтруем новые новости
-    unique_news = []
-    duplicates_count = 0
-
-    for news in new_news:
-        if news['link'] not in existing_links:
-            unique_news.append(news)
-        else:
-            duplicates_count += 1
-
-    return unique_news, duplicates_count
 
 
 if __name__ == "__main__":
-    # Загружаем существующие новости из файла
-    existing_news = []
-    try:
-        with open("news_raw.json", "r", encoding="utf-8") as f:
-            existing_news = json.load(f)
-        print(f"📂 Загружено {len(existing_news)} существующих новостей из news_raw.json")
-    except FileNotFoundError:
-        print("📂 Файл news_raw.json не найден, создаём новый")
-    except json.JSONDecodeError:
-        print("⚠️  Файл news_raw.json повреждён, создаём новый")
-
+    # Инициализируем трекер URL
+    url_tracker = URLTracker()
+    
+    # Очищаем старые URL (старше 24 часов)
+    removed_count = url_tracker.cleanup_old_urls()
+    if removed_count > 0:
+        print(f"🧹 Очищено {removed_count} старых URL из базы (>24ч)\n")
+    
     # Получаем новые новости
     news = fetch_recent_news()
     print(f"\n📰 Получено {len(news)} свежих новостей из RSS\n")
-
-    # Удаляем дубликаты
-    unique_news, duplicates = remove_duplicates(news, existing_news)
-
-    if duplicates > 0:
-        print(f"🗑️  Удалено {duplicates} дубликатов")
-
+    
+    # Проверяем на дубликаты через URL трекер
+    unique_news = []
+    duplicates_count = 0
+    
+    for news_item in news:
+        url = news_item.get('link', '')
+        if url and url_tracker.is_duplicate(url):
+            duplicates_count += 1
+        else:
+            unique_news.append(news_item)
+    
+    if duplicates_count > 0:
+        print(f"🗑️  Отклонено {duplicates_count} дубликатов (URL уже обработаны)")
+    
     print(f"✨ Уникальных новостей: {len(unique_news)}\n")
 
     # Фильтруем новости: оставляем только про Испанию и не рекламные
@@ -248,6 +239,12 @@ if __name__ == "__main__":
     print(f"   ⚠️  Оба критерия: {rejected_reasons['both']}")
     print(f"✅ Прошло проверку: {len(filtered_news)} новостей\n")
 
+    # Сохраняем URL успешно отфильтрованных новостей в трекер
+    if filtered_news:
+        new_urls = [news['link'] for news in filtered_news if news.get('link')]
+        added_urls = url_tracker.add_urls_batch(new_urls)
+        print(f"💾 Сохранено {added_urls} новых URL в базу отслеживания\n")
+    
     # Выводим информацию о новостях
     for n in filtered_news:
         print(f"🧩 {n['title']}")
@@ -263,3 +260,7 @@ if __name__ == "__main__":
         json.dump(filtered_news, f, ensure_ascii=False, indent=2)
 
     print(f"✅ Сохранено {len(filtered_news)} новостей в news_raw.json")
+    
+    # Финальная статистика
+    stats = url_tracker.get_stats()
+    print(f"📊 Всего URL в базе: {stats['total_urls']}")
