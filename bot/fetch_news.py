@@ -190,6 +190,7 @@ if __name__ == "__main__":
     # Проверяем на дубликаты через URL трекер
     unique_news = []
     duplicates_count = 0
+    new_urls_to_track = []
     
     for news_item in news:
         url = news_item.get('link', '')
@@ -197,6 +198,14 @@ if __name__ == "__main__":
             duplicates_count += 1
         else:
             unique_news.append(news_item)
+            # Сразу добавляем URL в список для отслеживания
+            if url:
+                new_urls_to_track.append(url)
+    
+    # Немедленно сохраняем URL в трекер, чтобы избежать дубликатов при параллельных запусках
+    if new_urls_to_track:
+        added_urls = url_tracker.add_urls_batch(new_urls_to_track)
+        print(f"💾 Добавлено {added_urls} новых URL в базу отслеживания (защита от дубликатов)")
     
     if duplicates_count > 0:
         print(f"🗑️  Отклонено {duplicates_count} дубликатов (URL уже обработаны)")
@@ -238,12 +247,6 @@ if __name__ == "__main__":
     print(f"   🛒 Реклама: {rejected_reasons['advertisement']}")
     print(f"   ⚠️  Оба критерия: {rejected_reasons['both']}")
     print(f"✅ Прошло проверку: {len(filtered_news)} новостей\n")
-
-    # Сохраняем URL успешно отфильтрованных новостей в трекер
-    if filtered_news:
-        new_urls = [news['link'] for news in filtered_news if news.get('link')]
-        added_urls = url_tracker.add_urls_batch(new_urls)
-        print(f"💾 Сохранено {added_urls} новых URL в базу отслеживания\n")
     
     # Выводим информацию о новостях
     for n in filtered_news:
