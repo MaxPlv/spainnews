@@ -7,7 +7,16 @@ from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from telegram.request import HTTPXRequest
+from telegram.error import NetworkError, TimedOut
 import os
+import logging
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -21,6 +30,19 @@ PROXY_URL = os.getenv("PROXY_URL")  # Опционально для прокси
 
 # Глобальная переменная для приложения
 bot_app = None
+
+
+async def error_handler(update, context):
+    """Обработчик ошибок от бота"""
+    logger.error(f"Exception while handling an update: {context.error}")
+    
+    # Подавляем сетевые ошибки (они обрабатываются автоматически)
+    if isinstance(context.error, (NetworkError, TimedOut)):
+        logger.warning(f"Network error occurred: {context.error}. Will retry automatically.")
+        return
+    
+    # Для других ошибок логируем подробную информацию
+    logger.exception("Unexpected error:", exc_info=context.error)
 
 
 async def run_news_pipeline():
@@ -141,11 +163,22 @@ def main():
         # Если указан прокси, используем его
         if PROXY_URL:
             print(f"🔐 Используется прокси: {PROXY_URL}", flush=True)
-            request = HTTPXRequest(proxy=PROXY_URL, connect_timeout=30.0, read_timeout=30.0)
+            request = HTTPXRequest(
+                proxy=PROXY_URL,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                pool_timeout=30.0,
+                connection_pool_size=8
+            )
             builder = builder.request(request)
         else:
-            # Увеличиваем таймауты для лучшей стабильности
-            request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+            # Увеличиваем таймауты и настраиваем пул соединений
+            request = HTTPXRequest(
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                pool_timeout=30.0,
+                connection_pool_size=8
+            )
             builder = builder.request(request)
 
         app = builder.post_init(post_init).post_shutdown(post_shutdown).build()
@@ -153,20 +186,30 @@ def main():
         # Добавляем обработчики
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CallbackQueryHandler(button_handler))
+        
+        # Добавляем обработчик ошибок
+        app.add_error_handler(error_handler)
 
-        print("🚀 Запуск бота...\n", flush=True)
+        print("🚀 Запуск бота...\\n", flush=True)
         print("✅ Бот запущен и работает!", flush=True)
-        print("📬 Новости будут приходить автоматически каждые 3 часа", flush=True)
+        print("📬 Новости будут приходить автоматически каждые 2 часа", flush=True)
         print("💡 Для немедленного тестирования раскомментируйте строку 103 в main.py", flush=True)
-        print("🛑 Нажмите Ctrl+C для остановки\n", flush=True)
+        print("🛑 Нажмите Ctrl+C для остановки\\n", flush=True)
 
-        # Запускаем бота (он будет работать постоянно)
+        # Запускаем бота с retry-логикой для network errors
         app.run_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True
+            drop_pending_updates=True,
+            # Параметры для обработки сетевых ошибок
+            pool_timeout=30.0,
+            connect_timeout=30.0,
+            read_timeout=30.0,
         )
 
+    except KeyboardInterrupt:
+        print("\n🛑 Бот остановлен пользователем")
     except Exception as e:
+        logger.exception("Критическая ошибка запуска бота")
         print(f"\n❌ Ошибка запуска бота: {e}")
         print("\n💡 Возможные причины:")
         print("   1. Нет подключения к интернету")
