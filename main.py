@@ -196,14 +196,10 @@ def main():
         print("💡 Для немедленного тестирования раскомментируйте строку 103 в main.py", flush=True)
         print("🛑 Нажмите Ctrl+C для остановки\\n", flush=True)
 
-        # Запускаем бота с retry-логикой для network errors
+        # Запускаем бота (retry-логика настроена через HTTPXRequest выше)
         app.run_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True,
-            # Параметры для обработки сетевых ошибок
-            pool_timeout=30.0,
-            connect_timeout=30.0,
-            read_timeout=30.0,
+            drop_pending_updates=True
         )
 
     except KeyboardInterrupt:
