@@ -185,6 +185,9 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
         "2) Пиши в стиле Александра Невзорова, но на 60% от его стиля.\n"
         "3) Создай краткую выжимку на русском (5-6 предложений; разделяй на абзацы, если уместно; максимум 4000 символов) — поле summary_ru.\n"
         "4) Подбери 3-4 хэштега по содержанию (без пробелов, с #) — поле hashtags (массив строк).\n\n"
+        "ВАЖНО: НЕ упоминай в тексте или заголовке, что используешь стиль Невзорова или любого другого журналиста. "
+        "НЕ добавляй фразы типа 'Невзоров стайл', 'в стиле...', или подобные комментарии о стиле написания. "
+        "Просто пиши в указанном стиле, но без упоминания этого факта.\n\n"
         "ВЕРНИ СТРОГО JSON ОБЪЕКТ С ПОЛЯМИ: title_ru, summary_ru, hashtags.\n"
         "Пример корректного ответа:\n"
         '{"title_ru":"...","summary_ru":"...","hashtags":["#madrid","#immigration"]}\n\n'
@@ -380,6 +383,11 @@ def main():
         if not hashtags or len(hashtags) < 2:
             print("   ⚠️ Мало хэштегов, пропускаем")
             rejected_news.append({"title": title, "reason": "few_hashtags"})
+            continue
+        # Проверка на упоминание "Невзоров" в заголовке или тексте
+        if "невзоров" in rewritten_title.lower() or "невзоров" in rewritten_text.lower():
+            print("   ⚠️ Упоминание 'Невзоров' в тексте/заголовке, пропускаем")
+            rejected_news.append({"title": title, "reason": "nevzorov_mention"})
             continue
         # Добавляем хэштеги в конец summary, если их нет
         if not re.search(r'#\w+', rewritten_text):
