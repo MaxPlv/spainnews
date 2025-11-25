@@ -319,7 +319,8 @@ def main():
 
     processed_news = []
     rejected_news = []
-    seen_titles = []
+    seen_titles = []  # исходные заголовки из RSS
+    seen_processed_titles = []  # переписанные AI заголовки
     cache = load_cache()
 
     for idx, news in enumerate(news_items, start=1):
@@ -389,6 +390,12 @@ def main():
             print("   ⚠️ Упоминание 'Невзоров' в тексте/заголовке, пропускаем")
             rejected_news.append({"title": title, "reason": "nevzorov_mention"})
             continue
+        # Проверка на дубликат среди переписанных заголовков (для отлова одинаковых событий из разных источников)
+        if is_duplicate(rewritten_title, seen_processed_titles):
+            print(f"   ⚠️ Дубликат переписанного заголовка (одно событие из разных источников), пропускаем")
+            rejected_news.append({"title": title, "reason": "duplicate_processed"})
+            continue
+        seen_processed_titles.append(rewritten_title)
         # Добавляем хэштеги в конец summary, если их нет
         if not re.search(r'#\w+', rewritten_text):
             rewritten_text = rewritten_text.rstrip() + "\n\n" + " ".join(hashtags[:4])
