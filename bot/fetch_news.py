@@ -52,7 +52,7 @@ def is_spain_related(text):
     """Проверяет, связана ли новость с Испанией"""
     text_lower = text.lower()
     
-    # Ключевые слова, связанные с Испанией
+    # Длинные ключевые слова (можно искать как подстроку)
     spain_keywords = [
          # страны/города
         "españ", "españa", "madrid", 'valéncia', "barcelona", "valencia", "sevilla", "zaragoza", "bilbao",
@@ -67,12 +67,26 @@ def is_spain_related(text):
         # испанские компании
         "bbva", "santander", "caixabank", "iberdrola", "repsol", "endesa",
 
-        # политика
-        "psoe", "pp", "vox", "sumar", "podemos", "erc", "junts",
+        # политики (имена/фамилии - безопасно как подстрока)
         "sánchez", "ayuso", "feijóo", "abascal", "yolanda díaz",
     ]
     
-    return any(keyword in text_lower for keyword in spain_keywords)
+    # Короткие аббревиатуры (нужна проверка границ слов)
+    # Используем регулярные выражения для точного совпадения
+    import re
+    short_abbrev = ["psoe", "pp", "vox", "sumar", "podemos", "erc", "junts"]
+    
+    # Проверяем длинные ключевые слова
+    if any(keyword in text_lower for keyword in spain_keywords):
+        return True
+    
+    # Проверяем короткие аббревиатуры с границами слов
+    for abbrev in short_abbrev:
+        # \b - граница слова (word boundary)
+        if re.search(r'\b' + re.escape(abbrev) + r'\b', text_lower):
+            return True
+    
+    return False
 
 
 def is_not_advertisement(text):
