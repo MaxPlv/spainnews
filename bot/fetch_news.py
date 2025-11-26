@@ -54,27 +54,10 @@ def is_spain_related(text):
     
     # Длинные ключевые слова (можно искать как подстроку)
     spain_keywords = [
-         # страны/регионы/автономные сообщества
+         # страны/города
         "españ", "españa", "madrid", 'valéncia', "barcelona", "valencia", "sevilla", "zaragoza", "bilbao",
-        "andalucía", "cataluña", "galicia", "pais vasco", "país vasco", "comunidad valenciana",
-        "castilla", "castilla y león", "castilla-la mancha", "la mancha", "navarra", "murcia", 
-        "asturias", "cantabria", "aragón", "extremadura", "la rioja", "rioja",
-        "baleares", "islas baleares", "canarias", "islas canarias",
-        
-        # 100 городов Испании
-        "málaga", "palma", "las palmas", "alicante", "córdoba", "valladolid", "vigo", "gijón",
-        "hospitalet", "vitoria", "coruña", "granada", "elche", "oviedo", "badalona", "cartagena",
-        "terrassa", "jerez", "sabadell", "móstoles", "santa cruz", "pamplona", "almería", "fuenlabrada",
-        "leganés", "getafe", "alcalá", "burgos", "salamanca", "san sebastián", "logroño", "badajoz",
-        "albacete", "santander", "castellón", "alcorcón", "tarragona", "león", "cádiz", "huelva",
-        "marbella", "mataró", "jaén", "parla", "algeciras", "torrejón", "ourense", "reus",
-        "telde", "barakaldo", "lugo", "san fernando", "girona", "cáceres", "lorca", "coslada",
-        "talavera", "el ejido", "torrevieja", "ávila", "palencia", "guadalajara", "melilla", "ceuta",
-        "pontevedra", "manresa", "roquetas", "linares", "alcobendas", "zamora", "segovia", "cuenca",
-        "torremolinos", "ronda", "benidorm", "aranjuez", "estepona", "alcoy", "gandía", "chiclana",
-        "ferrol", "vélez", "elda", "toledo", "ponferrada", "puerto real", "benalmádena", "orihuela",
-        "sagunto", "utrera", "torrent", "la línea", "motril", "paterna", "puertollano", "cornellá",
-        "molina", "pozuelo", "rubí", "villanueva", "rivas",
+        "andalucía", "cataluña", "galicia", "pais vasco", "comunidad valenciana",
+        "castilla", "navarra", "murcia", "asturias", "cantabria",
 
         # органы власти
         "gobierno", "ayuntamiento", "comunidad autónoma",
@@ -84,46 +67,8 @@ def is_spain_related(text):
         # испанские компании
         "bbva", "santander", "caixabank", "iberdrola", "repsol", "endesa",
 
-        # известные люди Испании (политики, королевская семья, бизнес, спорт, культура)
-        # Политики
-        "sánchez", "ayuso", "feijóo", "abascal", "yolanda díaz", "iglesias", "montero",
-        "García-Page", "moreno bonilla", "mazón", "aragonés", "urkullu", "revilla",
-        "García albiol", "edmundo bal", "espinosa de los monteros", "macarena olona",
-        "rufián", "puigdemont", "junqueras", "arrimadas", "borrell", "calviño",
-        "escrivá", "marlaska", "robles", "ribera", "bolaños", "alegría",
-        "albares", "planas", "cuerpo", "urtasun", "montero", "belarra",
-        
-        # Королевская семья
-        "felipe vi", "letizia", "leonor", "sofía", "juan carlos", "cristina de borbón",
-        "iñaki urdangarin", "froilán",
-        
-        # Судьи и прокуроры
-        "garcía castellón", "peinado", "marchena", "lesmes", "dolores delgado",
-        "álvaro garcía", "garcía ortiz", "conde-pumpido",
-        
-        # Бизнесмены
-        "amancio ortega", "sandra ortega", "botín", "Ana botín", "isak andic",
-        "florentino pérez", "francisco gonzález", "juan roig", "del pino",
-        "miguel fluxá", "entrecanales", "alierta", "álvarez",
-        
-        # Футболисты и тренеры
-        "ancelotti", "xavi", "vinicius", "benzema", "modric", "kroos", "bellingham",
-        "mbappé", "lewandowski", "ter stegen", "pedri", "gavi", "morata", "rodrigo",
-        "rodri", "carvajal", "nacho", "yamal", "ansu fati", "ferran torres",
-        "griezmann", "koke", "oblak", "courtois", "valverde", "camavinga",
-        
-        # Другие спортсмены
-        "alcaraz", "nadal", "gasol", "lorenzo", "sainz", "alonso", "márquez",
-        "mir", "belmonte", "craviotto",
-        
-        # Журналисты и медиа
-        "ana rosa", "susanna griso", "carlos herrera", "alsina", "ferreras",
-        "ana pastor", "évole", "buenafuente", "broncano", "pablo motos",
-        "sandra golpe", "matías prats", "iker jiménez", "carmen porter",
-        
-        # Культура и искусство
-        "almodóvar", "penélope cruz", "javier bardem", "antonio banderas",
-        "rosalía", "alejandro sanz", "pablo alborán", "bisbal",
+        # политики (имена/фамилии - безопасно как подстрока)
+        "sánchez", "ayuso", "feijóo", "abascal", "yolanda díaz",
     ]
     
     # Короткие аббревиатуры (нужна проверка границ слов)
