@@ -72,7 +72,6 @@ def is_spain_related(text):
     ]
     
     # Короткие аббревиатуры (нужна проверка границ слов)
-    # Используем регулярные выражения для точного совпадения
     import re
     short_abbrev = ["psoe", "pp", "vox", "sumar", "podemos", "erc", "junts"]
     
