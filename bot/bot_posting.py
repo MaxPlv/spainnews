@@ -151,6 +151,14 @@ async def schedule_auto_posting(application: Application):
             text=report,
             parse_mode="Markdown"
         )
+    
+    # Очищаем result_news.json после планирования, чтобы избежать дубликатов в следующем цикле
+    try:
+        with open("result_news.json", "w", encoding="utf-8") as f:
+            json.dump([], f)
+        print("🗑️  result_news.json очищен после планирования")
+    except Exception as e:
+        print(f"⚠️ Не удалось очистить result_news.json: {e}")
 async def send_next_news_to_admin(application: Application):
     """Отправляет следующую новость админу"""
     news = application.bot_data.get("news", [])
@@ -168,6 +176,15 @@ async def send_next_news_to_admin(application: Application):
             chat_id=ADMIN_CHAT_ID,
             text="✅ Все новости просмотрены!"
         )
+        
+        # Очищаем result_news.json после просмотра всех новостей
+        try:
+            with open("result_news.json", "w", encoding="utf-8") as f:
+                json.dump([], f)
+            print("🗑️  result_news.json очищен после просмотра всех новостей")
+        except Exception as e:
+            print(f"⚠️ Не удалось очистить result_news.json: {e}")
+        
         return
 
     n = news[idx]
