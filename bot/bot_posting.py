@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -18,22 +19,37 @@ ALLOWED_USERS = [int(x) for x in os.getenv("ALLOWED_USERS", ADMIN_CHAT_ID or "")
 # Константы Telegram
 MAX_MESSAGE_LENGTH = 4096
 
+# Определяем корневую директорию проекта
+PROJECT_ROOT = Path(__file__).parent.parent
+RESULT_NEWS_FILE = PROJECT_ROOT / "result_news.json"
+REJECTED_NEWS_FILE = PROJECT_ROOT / "rejected_news.json"
+SETTINGS_FILE = PROJECT_ROOT / "settings.json"
+
 # Загружаем новости
 def load_news():
+    """Загружает обработанные новости из result_news.json"""
     try:
-        with open("result_news.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
+        if not RESULT_NEWS_FILE.exists():
+            print(f"ℹ️  Файл {RESULT_NEWS_FILE} не существует, возвращаем пустой список")
+            return []
+        with open(RESULT_NEWS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"⚠️  Ошибка загрузки {RESULT_NEWS_FILE}: {e}")
         return []
 
 def load_rejected_news():
+    """Загружает отклоненные новости из rejected_news.json"""
     try:
-        with open("rejected_news.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
+        if not REJECTED_NEWS_FILE.exists():
+            return []
+        with open(REJECTED_NEWS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"⚠️  Ошибка загрузки {REJECTED_NEWS_FILE}: {e}")
         return []
-
-SETTINGS_FILE = "settings.json"
 
 def load_settings():
     try:
@@ -154,7 +170,7 @@ async def schedule_auto_posting(application: Application):
     
     # Очищаем result_news.json после планирования, чтобы избежать дубликатов в следующем цикле
     try:
-        with open("result_news.json", "w", encoding="utf-8") as f:
+        with open(RESULT_NEWS_FILE, "w", encoding="utf-8") as f:
             json.dump([], f)
         print("🗑️  result_news.json очищен после планирования")
     except Exception as e:
@@ -179,7 +195,7 @@ async def send_next_news_to_admin(application: Application):
         
         # Очищаем result_news.json после просмотра всех новостей
         try:
-            with open("result_news.json", "w", encoding="utf-8") as f:
+            with open(RESULT_NEWS_FILE, "w", encoding="utf-8") as f:
                 json.dump([], f)
             print("🗑️  result_news.json очищен после просмотра всех новостей")
         except Exception as e:
