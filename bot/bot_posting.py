@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -107,14 +108,34 @@ async def send_news_to_admin(application: Application):
 
 async def schedule_auto_posting(application: Application):
     """Планирует автоматическую публикацию новостей"""
-    news = load_news()
+    all_news = load_news()
     rejected = load_rejected_news()
+    
+    # Фильтруем новости по времени обработки - только из текущего цикла
+    # Цикл каждые 2 часа, берем новости не старше 2.5 часов для запаса
+    current_time = time.time()
+    max_age_seconds = 2.5 * 60 * 60  # 2.5 часа
+    
+    news = []
+    old_news_count = 0
+    for item in all_news:
+        processed_at = item.get("processed_at", 0)
+        age_seconds = current_time - processed_at
+        
+        if age_seconds <= max_age_seconds:
+            news.append(item)
+        else:
+            old_news_count += 1
+            print(f"⏰ Пропущена старая новость (возраст: {age_seconds/3600:.1f}ч): {item.get('title', '')[:50]}...")
+    
+    if old_news_count > 0:
+        print(f"🗑️  Отфильтровано {old_news_count} новостей из предыдущих циклов")
     
     if not news:
         if ADMIN_CHAT_ID:
             await application.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
-                text=f"ℹ️ Нет новостей для публикации.\n🚫 Отклонено: {len(rejected)}"
+                text=f"ℹ️ Нет новостей для публикации из текущего цикла.\n🚫 Отклонено AI: {len(rejected)}\n⏰ Старых новостей: {old_news_count}"
             )
         return
 
@@ -167,14 +188,7 @@ async def schedule_auto_posting(application: Application):
             text=report,
             parse_mode="Markdown"
         )
-    
-    # Очищаем result_news.json после планирования, чтобы избежать дубликатов в следующем цикле
-    try:
-        with open(RESULT_NEWS_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f)
-        print("🗑️  result_news.json очищен после планирования")
-    except Exception as e:
-        print(f"⚠️ Не удалось очистить result_news.json: {e}")
+
 async def send_next_news_to_admin(application: Application):
     """Отправляет следующую новость админу"""
     news = application.bot_data.get("news", [])
@@ -192,15 +206,7 @@ async def send_next_news_to_admin(application: Application):
             chat_id=ADMIN_CHAT_ID,
             text="✅ Все новости просмотрены!"
         )
-        
-        # Очищаем result_news.json после просмотра всех новостей
-        try:
-            with open(RESULT_NEWS_FILE, "w", encoding="utf-8") as f:
-                json.dump([], f)
-            print("🗑️  result_news.json очищен после просмотра всех новостей")
-        except Exception as e:
-            print(f"⚠️ Не удалось очистить result_news.json: {e}")
-        
+
         return
 
     n = news[idx]

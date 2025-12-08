@@ -414,7 +414,8 @@ def main():
             "published": news.get("published", ""),
             "author": news.get("author", ""),
             "categories": news.get("categories", []),
-            "image": news.get("image")
+            "image": news.get("image"),
+            "processed_at": time.time()  # Временная метка обработки
         })
 
     # Сохраняем результат

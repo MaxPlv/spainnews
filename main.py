@@ -18,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Отключаем подробные логи от httpx (HTTP запросы к Telegram)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Загрузка переменных окружения
 load_dotenv()
 
