@@ -51,10 +51,13 @@ BASE_RETRY_DELAY = 5  # базовая задержка для экспонен�
 MAX_RETRIES = 5
 
 # Модели в порядке приоритета (fallback-ready)
+# Используем только существующие модели
 MODEL_FALLBACKS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash-001"
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
 ]
 
 # Подготовка директорий
@@ -160,8 +163,15 @@ def parse_json_from_text(text):
     Если не получается, возвращаем None.
     """
     try:
+        # Сначала пытаемся распарсить текст целиком
+        cleaned = text.strip()
+        return json.loads(cleaned)
+    except:
+        pass
+    
+    try:
         # Попытаемся найти {...} блок
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
         if match:
             candidate = match.group(0)
             # чистим непечатаемые символы
@@ -169,7 +179,8 @@ def parse_json_from_text(text):
             return json.loads(candidate)
         # Если нет JSON в тексте — попробуем разобрать простым способом
         return None
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ JSON parsing error: {e}")
         return None
 
 def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay=BASE_RETRY_DELAY):
@@ -363,6 +374,18 @@ def main():
         rewritten_title = ai_result.get("title_ru", "").strip()
         rewritten_text = ai_result.get("summary_ru", "").strip()
         hashtags = ai_result.get("hashtags", [])
+        
+        # Чистим проблемные символы, которые могут сломать Telegram Markdown
+        # Удаляем обратные кавычки
+        rewritten_title = rewritten_title.replace('`', '')
+        rewritten_text = rewritten_text.replace('`', '')
+        
+        # Удаляем одиночные звездочки и подчеркивания, которые не являются парными
+        # (оставляя хэштеги нетронутыми)
+        rewritten_title = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_title)
+        rewritten_text = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_text)
+        rewritten_title = re.sub(r'(?<!_)_(?!_)', '', rewritten_title)
+        rewritten_text = re.sub(r'(?<!_)_(?!_)', '', rewritten_text)
 
         # Валидации как раньше
         if not rewritten_title:
