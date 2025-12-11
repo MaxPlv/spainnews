@@ -6,6 +6,7 @@ import json
 import time
 import re
 import random
+import traceback
 from difflib import SequenceMatcher
 from pathlib import Path
 import requests
@@ -53,11 +54,11 @@ MAX_RETRIES = 5
 # Модели в порядке приоритета (fallback-ready)
 # Используем только существующие модели
 MODEL_FALLBACKS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro"
+    "gemini-2.5-flash",        # Быстрая, актуальная и рекомендуемая модель
+    "gemini-2.5-pro",          # Самая мощная модель для сложных задач (второй приоритет)
+    "gemini-2.5-flash-lite",   # Ультра-быстрая и бюджетная модель (отлично для квот)
+    "gemini-2.0-flash",        # Предыдущая стабильная версия (как запасной вариант)
+    "gemini-1.0-pro"           # Самая стабильная, предыдущая версия Pro (резерв)
 ]
 
 # Подготовка директорий
@@ -232,10 +233,15 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
                 text = response.text
             else:
                 raise Exception("No text in response from model")
+            
+            print(f"   📨 Gemini response length: {len(text)} chars")
+            print(f"   📝 First 300 chars of raw response: {text[:300]}")
+            
             text = clean_ai_response(text)
 
             # Попробуем парсить JSON
             parsed = parse_json_from_text(text)
+            print(f"   🔍 JSON parsing result: {type(parsed)} {'(dict)' if isinstance(parsed, dict) else '(failed)'}")
             if parsed and isinstance(parsed, dict):
                 # Небольшая валидация
                 title = parsed.get("title_ru", "").strip()
@@ -280,7 +286,9 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
         except Exception as e:
             last_error = str(e)
             le = last_error.lower()
-            print(f"   ⚠️  Gemini error (model={model}): {last_error[:140]}")
+            print(f"   ⚠️  Gemini error (model={model}): {last_error[:300]}")
+            print(f"   📋 Error traceback:")
+            traceback.print_exc()
 
             # классифицируем ошибку
             overloaded = ("503" in le) or ("overload" in le) or ("unavailable" in le) or ("overloaded" in le)
@@ -335,111 +343,129 @@ def main():
     cache = load_cache()
 
     for idx, news in enumerate(news_items, start=1):
-        title = news.get("title", "").strip()
-        description = news.get("description", "").strip()
-        link = news.get("link", "").strip()
-
-        print(f"\n[{idx}/{len(news_items)}] {title[:80]}")
-
-        if is_duplicate(title, seen_titles):
-            print("   ⚠️ Дубликат, пропускаем")
-            rejected_news.append({"title": title, "reason": "duplicate"})
-            continue
-        seen_titles.append(title)
-
-        # Подготовка текста для модели (сначала пытаемся полную статью)
-        article_content = ""
-        if link:
-            print("   🔗 Загружаем статью...")
-            article_content = fetch_article_content(link)
-            if article_content:
-                print(f"   📄 Загружено {len(article_content)} символов")
-            else:
-                print("   ⚠️ Полный текст не получен, используем description")
-
-        text_for_model = (title + ". " + (article_content or description or title))[:12000]
-
-        # Минимальная задержка между вызовами к Gemini
-        print(f"   💤 Ждём {GLOBAL_DELAY}s перед запросом к Gemini (глобальный rate limit)")
-        time.sleep(GLOBAL_DELAY)
-
         try:
-            ai_result = gemini_request_single_json(text_for_model)
+            title = news.get("title", "").strip()
+            description = news.get("description", "").strip()
+            link = news.get("link", "").strip()
+
+            print(f"\n{'='*70}")
+            print(f"[{idx}/{len(news_items)}] {title[:80]}")
+            print(f"{'='*70}")
+
+            if is_duplicate(title, seen_titles):
+                print("   ⚠️ Дубликат, пропускаем")
+                rejected_news.append({"title": title, "reason": "duplicate"})
+                continue
+            seen_titles.append(title)
+
+            # Подготовка текста для модели (сначала пытаемся полную статью)
+            article_content = ""
+            if link:
+                print("   🔗 Загружаем статью...")
+                article_content = fetch_article_content(link)
+                if article_content:
+                    print(f"   📄 Загружено {len(article_content)} символов")
+                else:
+                    print("   ⚠️ Полный текст не получен, используем description")
+
+            text_for_model = (title + ". " + (article_content or description or title))[:12000]
+
+            # Минимальная задержка между вызовами к Gemini
+            print(f"   💤 Ждём {GLOBAL_DELAY}s перед запросом к Gemini (глобальный rate limit)")
+            time.sleep(GLOBAL_DELAY)
+
+            print(f"   🤖 Отправляем запрос к Gemini...")
+            try:
+                ai_result = gemini_request_single_json(text_for_model)
+                print(f"   ✨ Получен ответ от Gemini: title_ru={bool(ai_result.get('title_ru'))}, summary_ru_length={len(ai_result.get('summary_ru', ''))}, hashtags_count={len(ai_result.get('hashtags', []))}")
+            except Exception as e:
+                print(f"   ❌ Проблема с Gemini: {e}")
+                print(f"   📋 Full traceback:")
+                traceback.print_exc()
+                rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
+                continue
+
+            # Формируем итоговые поля (сохраняем в прежнем формате)
+            rewritten_title = ai_result.get("title_ru", "").strip()
+            rewritten_text = ai_result.get("summary_ru", "").strip()
+            hashtags = ai_result.get("hashtags", [])
+            
+            print(f"   📝 AI результат: title='{rewritten_title[:50]}...', text_length={len(rewritten_text)}, hashtags={hashtags}")
+            
+            # Чистим проблемные символы, которые могут сломать Telegram Markdown
+            # Удаляем обратные кавычки
+            rewritten_title = rewritten_title.replace('`', '')
+            rewritten_text = rewritten_text.replace('`', '')
+            
+            # Удаляем одиночные звездочки и подчеркивания, которые не являются парными
+            # (оставляя хэштеги нетронутыми)
+            rewritten_title = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_title)
+            rewritten_text = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_text)
+            rewritten_title = re.sub(r'(?<!_)_(?!_)', '', rewritten_title)
+            rewritten_text = re.sub(r'(?<!_)_(?!_)', '', rewritten_text)
+
+            # Валидации как раньше
+            print(f"   🔍 Начинаем валидацию результатов...")
+            if not rewritten_title:
+                print("   ⚠️ Пустой заголовок от модели, пропускаем")
+                rejected_news.append({"title": title, "reason": "empty_title"})
+                continue
+            if not rewritten_text:
+                print("   ⚠️ Пустой summary от модели, пропускаем")
+                rejected_news.append({"title": title, "reason": "empty_summary"})
+                continue
+            if not is_russian_text(rewritten_title):
+                print(f"   ⚠️ Заголовок не на русском >=80%, пропускаем (title: '{rewritten_title[:50]}')")
+                rejected_news.append({"title": title, "reason": "not_russian_title"})
+                continue
+            if not is_russian_text(rewritten_text):
+                print(f"   ⚠️ Текст не на русском >=80%, пропускаем")
+                rejected_news.append({"title": title, "reason": "not_russian_text"})
+                continue
+            if not hashtags or len(hashtags) < 2:
+                print(f"   ⚠️ Мало хэштегов ({len(hashtags)}), пропускаем")
+                rejected_news.append({"title": title, "reason": "few_hashtags"})
+                continue
+            # Проверка на упоминание "Невзоров" в заголовке или тексте
+            if "невзоров" in rewritten_title.lower() or "невзоров" in rewritten_text.lower():
+                print("   ⚠️ Упоминание 'Невзоров' в тексте/заголовке, пропускаем")
+                rejected_news.append({"title": title, "reason": "nevzorov_mention"})
+                continue
+            # Проверка на дубликат среди переписанных заголовков (для отлова одинаковых событий из разных источников)
+            if is_duplicate(rewritten_title, seen_processed_titles):
+                print(f"   ⚠️ Дубликат переписанного заголовка (одно событие из разных источников), пропускаем")
+                rejected_news.append({"title": title, "reason": "duplicate_processed"})
+                continue
+            seen_processed_titles.append(rewritten_title)
+            # Добавляем хэштеги в конец summary, если их нет
+            if not re.search(r'#\w+', rewritten_text):
+                rewritten_text = rewritten_text.rstrip() + "\n\n" + " ".join(hashtags[:4])
+
+            if not is_telegram_compatible(rewritten_title, rewritten_text, link):
+                print(f"   ⚠️ Превышает лимит Telegram (length={len(rewritten_text)}), пропускаем")
+                rejected_news.append({"title": title, "reason": "telegram_limit"})
+                continue
+
+            print(f"   ✅ ОК: {rewritten_title[:60]} / summary {len(rewritten_text)} chars / tags {len(hashtags)}")
+
+            processed_news.append({
+                "title": rewritten_title,
+                "link": link,
+                "description": rewritten_text,
+                "published": news.get("published", ""),
+                "author": news.get("author", ""),
+                "categories": news.get("categories", []),
+                "image": news.get("image"),
+                "processed_at": time.time()  # Временная метка обработки
+            })
+            
         except Exception as e:
-            print(f"   ❌ Проблема с Gemini: {e}")
-            rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
+            print(f"\n   💥 КРИТИЧЕСКАЯ ОШИБКА при обработке новости [{idx}/{len(news_items)}]")
+            print(f"   ❌ Ошибка: {e}")
+            print(f"   📋 Full traceback:")
+            traceback.print_exc()
+            rejected_news.append({"title": news.get("title", "Unknown"), "reason": f"processing_error: {str(e)}"})
             continue
-
-        # Формируем итоговые поля (сохраняем в прежнем формате)
-        rewritten_title = ai_result.get("title_ru", "").strip()
-        rewritten_text = ai_result.get("summary_ru", "").strip()
-        hashtags = ai_result.get("hashtags", [])
-        
-        # Чистим проблемные символы, которые могут сломать Telegram Markdown
-        # Удаляем обратные кавычки
-        rewritten_title = rewritten_title.replace('`', '')
-        rewritten_text = rewritten_text.replace('`', '')
-        
-        # Удаляем одиночные звездочки и подчеркивания, которые не являются парными
-        # (оставляя хэштеги нетронутыми)
-        rewritten_title = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_title)
-        rewritten_text = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_text)
-        rewritten_title = re.sub(r'(?<!_)_(?!_)', '', rewritten_title)
-        rewritten_text = re.sub(r'(?<!_)_(?!_)', '', rewritten_text)
-
-        # Валидации как раньше
-        if not rewritten_title:
-            print("   ⚠️ Пустой заголовок от модели, пропускаем")
-            rejected_news.append({"title": title, "reason": "empty_title"})
-            continue
-        if not rewritten_text:
-            print("   ⚠️ Пустой summary от модели, пропускаем")
-            rejected_news.append({"title": title, "reason": "empty_summary"})
-            continue
-        if not is_russian_text(rewritten_title):
-            print("   ⚠️ Заголовок не на русском >=80%, пропускаем")
-            rejected_news.append({"title": title, "reason": "not_russian_title"})
-            continue
-        if not is_russian_text(rewritten_text):
-            print("   ⚠️ Текст не на русском >=80%, пропускаем")
-            rejected_news.append({"title": title, "reason": "not_russian_text"})
-            continue
-        if not hashtags or len(hashtags) < 2:
-            print("   ⚠️ Мало хэштегов, пропускаем")
-            rejected_news.append({"title": title, "reason": "few_hashtags"})
-            continue
-        # Проверка на упоминание "Невзоров" в заголовке или тексте
-        if "невзоров" in rewritten_title.lower() or "невзоров" in rewritten_text.lower():
-            print("   ⚠️ Упоминание 'Невзоров' в тексте/заголовке, пропускаем")
-            rejected_news.append({"title": title, "reason": "nevzorov_mention"})
-            continue
-        # Проверка на дубликат среди переписанных заголовков (для отлова одинаковых событий из разных источников)
-        if is_duplicate(rewritten_title, seen_processed_titles):
-            print(f"   ⚠️ Дубликат переписанного заголовка (одно событие из разных источников), пропускаем")
-            rejected_news.append({"title": title, "reason": "duplicate_processed"})
-            continue
-        seen_processed_titles.append(rewritten_title)
-        # Добавляем хэштеги в конец summary, если их нет
-        if not re.search(r'#\w+', rewritten_text):
-            rewritten_text = rewritten_text.rstrip() + "\n\n" + " ".join(hashtags[:4])
-
-        if not is_telegram_compatible(rewritten_title, rewritten_text, link):
-            print("   ⚠️ Превышает лимит Telegram, пропускаем")
-            rejected_news.append({"title": title, "reason": "telegram_limit"})
-            continue
-
-        print(f"   ✅ ОК: {rewritten_title[:60]} / summary {len(rewritten_text)} chars / tags {len(hashtags)}")
-
-        processed_news.append({
-            "title": rewritten_title,
-            "link": link,
-            "description": rewritten_text,
-            "published": news.get("published", ""),
-            "author": news.get("author", ""),
-            "categories": news.get("categories", []),
-            "image": news.get("image"),
-            "processed_at": time.time()  # Временная метка обработки
-        })
 
     # Сохраняем результат
     print(f"\n💾 Сохранение {len(processed_news)} обработанных новостей в {OUTPUT_FILE}...")
