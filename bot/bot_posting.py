@@ -150,9 +150,9 @@ async def schedule_auto_posting(application: Application):
     rejected = load_rejected_news()
     
     # Фильтруем новости по времени обработки - только из текущего цикла
-    # Цикл каждые 2 часа, берем новости не старше 2.5 часов для запаса
+    # Цикл каждые 2 часа, берем новости не старше 2 часов для запаса
     current_time = time.time()
-    max_age_seconds = 2.5 * 60 * 60  # 2.5 часа
+    max_age_seconds = 2 * 60 * 60  # 2 часа
     
     news = []
     old_news_count = 0
