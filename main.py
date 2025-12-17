@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from telegram.request import HTTPXRequest
 from telegram.error import NetworkError, TimedOut
+from telegram import Update, BotCommand
 import os
 import logging
 
@@ -27,6 +28,7 @@ load_dotenv()
 # Импортируем функции из бота
 sys.path.append(str(Path(__file__).parent / "bot"))
 from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings
+from bot.check_duplicates import check_duplicates_with_telethon, format_duplicates_report
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")  # Опционально для прокси
@@ -108,12 +110,48 @@ async def run_news_pipeline():
         print(f"❌ Непредвиденная ошибка: {e}")
 
 
+async def duplicates_command(update: Update, context):
+    """Команда /duplicates для проверки дубликатов в канале"""
+    await update.message.reply_text(
+        "🔍 Начинаю проверку последних 100 сообщений в канале...\n"
+        "Это может занять некоторое время."
+    )
+    
+    try:
+        # Проверяем дубликаты с помощью Telethon
+        result = await check_duplicates_with_telethon(limit=100, similarity_threshold=0.85)
+        
+        # Форматируем отчёт
+        report = format_duplicates_report(result)
+        
+        # Отправляем отчёт (разбиваем на части, если слишком длинный)
+        max_length = 4000
+        if len(report) > max_length:
+            # Разбиваем на части
+            parts = [report[i:i+max_length] for i in range(0, len(report), max_length)]
+            for idx, part in enumerate(parts, 1):
+                await update.message.reply_text(f"📄 Часть {idx}/{len(parts)}:\n\n{part}")
+        else:
+            await update.message.reply_text(report)
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка при проверке дубликатов:\n{e}")
+
+
 async def post_init(application: Application):
     """Инициализация после запуска бота"""
     global bot_app
     bot_app = application
 
     print("✅ Бот инициализирован и готов к работе")
+    
+    # Устанавливаем меню команд бота
+    commands = [
+        BotCommand("start", "Запустить бота и посмотреть новости"),
+        BotCommand("duplicates", "Проверить дубликаты в последних 100 сообщениях канала"),
+    ]
+    await application.bot.set_my_commands(commands)
+    print("✅ Меню команд установлено")
 
     # Создаём и запускаем планировщик
     scheduler = AsyncIOScheduler()
@@ -188,6 +226,7 @@ def main():
 
         # Добавляем обработчики
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("duplicates", duplicates_command))
         app.add_handler(CallbackQueryHandler(button_handler))
         
         # Добавляем обработчик ошибок
