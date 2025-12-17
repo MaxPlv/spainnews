@@ -10,7 +10,7 @@ from telegram.error import TelegramError
 
 load_dotenv()
 
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 
 
 def similarity(text1: str, text2: str) -> float:
@@ -95,6 +95,7 @@ async def check_duplicates_with_telethon(limit: int = 100, similarity_threshold:
         
         api_id = os.getenv("TELEGRAM_API_ID")
         api_hash = os.getenv("TELEGRAM_API_HASH")
+        bot_token = os.getenv("TELEGRAM_TOKEN")
         
         if not api_id or not api_hash:
             return {
@@ -104,9 +105,14 @@ async def check_duplicates_with_telethon(limit: int = 100, similarity_threshold:
                          "Получить можно на https://my.telegram.org"
             }
         
-        # Создаём клиент
+        if not bot_token:
+            return {
+                "error": "TELEGRAM_TOKEN не найден в .env файле"
+            }
+        
+        # Создаём клиент и авторизуемся как бот
         client = TelegramClient('bot_session', int(api_id), api_hash)
-        await client.start()
+        await client.start(bot_token=bot_token)
         
         # Получаем последние сообщения
         messages = []
