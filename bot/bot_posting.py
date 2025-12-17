@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from bot.published_news_tracker import check_duplicate, add_published_news
 
 # Загрузка ключей
 load_dotenv()
@@ -362,6 +363,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def publish_news(bot, news_item):
     """Публикует новость в канал"""
+    # Проверяем на дубликат перед публикацией
+    duplicate_check = check_duplicate(
+        title=news_item.get('title', ''),
+        text=news_item.get('description', ''),
+        similarity_threshold=0.85
+    )
+    
+    if duplicate_check['is_duplicate']:
+        match = duplicate_check['match']
+        similarity = duplicate_check['similarity_score']
+        matched_by = duplicate_check['matched_by']
+        
+        print(f"\n⚠️  ДУБЛИКАТ ОБНАРУЖЕН!")
+        print(f"   Новая новость: {news_item.get('title', '')[:60]}...")
+        print(f"   Похожа на: {match.get('title', '')[:60]}...")
+        print(f"   Схожесть: {similarity*100:.1f}% (по {matched_by})")
+        print(f"   Опубликована: {match.get('published_at', '')}")
+        print(f"   🚫 Публикация отменена\n")
+        
+        # Уведомляем админа о пропуске дубликата
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=(
+                        f"🚫 *Дубликат пропущен*\n\n"
+                        f"📰 {news_item.get('title', '')[:100]}\n\n"
+                        f"Похожа на новость от {match.get('published_at', '')[:10]}\n"
+                        f"Схожесть: {similarity*100:.0f}%"
+                    ),
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                print(f"Ошибка отправки уведомления админу: {e}")
+        return
+    
+    # Публикуем новость
     text = format_news_text(news_item)
 
     await bot.send_message(
@@ -370,6 +408,14 @@ async def publish_news(bot, news_item):
         parse_mode="Markdown",
         disable_web_page_preview=False
     )
+    
+    # Добавляем в историю опубликованных новостей
+    add_published_news(
+        title=news_item.get('title', ''),
+        text=news_item.get('description', ''),
+        url=news_item.get('link', '')
+    )
+    print(f"✅ Новость опубликована и добавлена в историю: {news_item.get('title', '')[:60]}...")
 
 async def schedule_post(context, news_item, delay_minutes):
     """Планирует отложенную публикацию"""
