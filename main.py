@@ -27,7 +27,7 @@ load_dotenv()
 
 # Импортируем функции из бота
 sys.path.append(str(Path(__file__).parent / "bot"))
-from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings
+from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings, publish_digest_job, DIGEST_HOURS
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")  # Опционально для прокси
@@ -127,7 +127,7 @@ async def post_init(application: Application):
     # Создаём и запускаем планировщик
     scheduler = AsyncIOScheduler()
 
-    # Добавляем задачу: каждые 2 часа
+    # Сбор + обработка новостей: каждые 2 часа (копит буфер дайджеста)
     scheduler.add_job(
         run_news_pipeline,
         trigger=CronTrigger(hour="*/2"),
@@ -136,9 +136,22 @@ async def post_init(application: Application):
         replace_existing=True
     )
 
+    # Публикация дайджеста: фиксированные слоты (по умолчанию 09/15/21)
+    digest_hours = ",".join(h.strip() for h in DIGEST_HOURS.split(",") if h.strip())
+    scheduler.add_job(
+        publish_digest_job,
+        trigger=CronTrigger(hour=digest_hours, minute=0),
+        args=[application.bot],
+        id="digest_publish",
+        name="Публикация дайджеста",
+        replace_existing=True
+    )
+
     scheduler.start()
     print("✅ Планировщик запущен")
-    print("⏰ Следующий запуск:", scheduler.get_job("news_pipeline").next_run_time)
+    print("⏰ Следующая обработка новостей:", scheduler.get_job("news_pipeline").next_run_time)
+    print(f"🗞 Слоты дайджеста (часы): {digest_hours}")
+    print("⏰ Следующий дайджест:", scheduler.get_job("digest_publish").next_run_time)
     print()
 
     # Сохраняем планировщик в bot_data
