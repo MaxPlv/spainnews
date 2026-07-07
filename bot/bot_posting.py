@@ -3,6 +3,7 @@ import json
 import time
 import asyncio
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -23,11 +24,19 @@ ALLOWED_USERS = [int(x) for x in os.getenv("ALLOWED_USERS", ADMIN_CHAT_ID or "")
 # Константы Telegram
 MAX_MESSAGE_LENGTH = 4096
 
+# Часовой пояс задаём явно (не полагаемся на tzlocal/TZ — в минимальном
+# контейнере без системной tzdata он молча откатывается на UTC).
+# Пакет tzdata в requirements гарантирует доступность базы поясов.
+try:
+    LOCAL_TZ = ZoneInfo(os.getenv("TZ", "Europe/Madrid"))
+except Exception:
+    LOCAL_TZ = ZoneInfo("Europe/Madrid")
+
 # --- Конфигурация дайджеста / маршрутизации по важности ---
 # Новости с importance >= URGENT_THRESHOLD публикуются сразу отдельным постом,
 # остальные копятся в буфер и уходят одним дайджестом по расписанию.
 URGENT_THRESHOLD = int(os.getenv("URGENT_THRESHOLD", "8"))
-# Часы публикации дайджеста (по локальному времени сервера), напр. "9,15,21"
+# Часы публикации дайджеста (по времени LOCAL_TZ), напр. "9,15,21"
 DIGEST_HOURS = os.getenv("DIGEST_HOURS", "9,15,21")
 # Тихие часы: срочное всё равно выходит, дайджест в это время не публикуется
 QUIET_START = int(os.getenv("QUIET_START", "0"))
@@ -36,7 +45,7 @@ QUIET_END = int(os.getenv("QUIET_END", "8"))
 
 def in_quiet_hours(now=None):
     """True, если сейчас тихие часы (интервал может пересекать полночь)."""
-    now = now or datetime.now()
+    now = now or datetime.now(LOCAL_TZ)
     h = now.hour
     if QUIET_START == QUIET_END:
         return False
@@ -343,7 +352,7 @@ async def publish_digest(bot):
         clear_pending()
         return
 
-    now = datetime.now()
+    now = datetime.now(LOCAL_TZ)
     header = f"🗞 *Дайджест новостей Испании*\n_{now.strftime('%d.%m, %H:%M')} · {len(fresh)} новостей_"
     messages = build_digest_messages(fresh, header=header)
 

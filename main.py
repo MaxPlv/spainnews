@@ -27,7 +27,7 @@ load_dotenv()
 
 # Импортируем функции из бота
 sys.path.append(str(Path(__file__).parent / "bot"))
-from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings, publish_digest_job, DIGEST_HOURS
+from bot.bot_posting import send_news_to_admin, button_handler, start, schedule_auto_posting, load_settings, publish_digest_job, DIGEST_HOURS, LOCAL_TZ
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")  # Опционально для прокси
@@ -124,8 +124,8 @@ async def post_init(application: Application):
     await application.bot.set_my_commands(commands)
     print("✅ Меню команд установлено")
 
-    # Создаём и запускаем планировщик
-    scheduler = AsyncIOScheduler()
+    # Создаём и запускаем планировщик (явный часовой пояс, не полагаемся на tzlocal)
+    scheduler = AsyncIOScheduler(timezone=LOCAL_TZ)
 
     # Сбор + обработка новостей: каждые 2 часа (копит буфер дайджеста)
     scheduler.add_job(
