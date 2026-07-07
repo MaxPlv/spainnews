@@ -135,6 +135,16 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# Runtime data files бота (генерируются пайплайном, не версионируем)
+news_raw.json
+result_news.json
+rejected_news.json
+news_urls.json
+published_news.json
+pending_digest.json
+gemini_cache.json
+settings.json
+
 # Environments
 .env
 .envrc

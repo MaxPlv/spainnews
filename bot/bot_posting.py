@@ -2,12 +2,14 @@ import os
 import json
 import time
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from bot.published_news_tracker import check_duplicate, add_published_news
+from bot.categories import category_emoji, category_label, CATEGORY_ORDER
+from bot.digest_buffer import add_to_digest, load_pending, clear_pending, pending_count
 
 # Загрузка ключей
 load_dotenv()
@@ -20,6 +22,27 @@ ALLOWED_USERS = [int(x) for x in os.getenv("ALLOWED_USERS", ADMIN_CHAT_ID or "")
 
 # Константы Telegram
 MAX_MESSAGE_LENGTH = 4096
+
+# --- Конфигурация дайджеста / маршрутизации по важности ---
+# Новости с importance >= URGENT_THRESHOLD публикуются сразу отдельным постом,
+# остальные копятся в буфер и уходят одним дайджестом по расписанию.
+URGENT_THRESHOLD = int(os.getenv("URGENT_THRESHOLD", "8"))
+# Часы публикации дайджеста (по локальному времени сервера), напр. "9,15,21"
+DIGEST_HOURS = os.getenv("DIGEST_HOURS", "9,15,21")
+# Тихие часы: срочное всё равно выходит, дайджест в это время не публикуется
+QUIET_START = int(os.getenv("QUIET_START", "0"))
+QUIET_END = int(os.getenv("QUIET_END", "8"))
+
+
+def in_quiet_hours(now=None):
+    """True, если сейчас тихие часы (интервал может пересекать полночь)."""
+    now = now or datetime.now()
+    h = now.hour
+    if QUIET_START == QUIET_END:
+        return False
+    if QUIET_START < QUIET_END:
+        return QUIET_START <= h < QUIET_END
+    return h >= QUIET_START or h < QUIET_END
 
 # Определяем корневую директорию проекта
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -97,17 +120,39 @@ def escape_markdown(text):
     
     return result
 
+def build_news_body(news_item):
+    """
+    Собирает тело карточки новости: эмодзи-рубрика + жирный заголовок,
+    короткие буллиты, хэштеги. Без ссылки на источник (её добавляет format_news_text).
+    Поддерживает и новый формат (bullets), и старый (description).
+    """
+    title = news_item.get('title', '').replace('`', '')
+    emoji = category_emoji(news_item.get('category'))
+
+    bullets = news_item.get('bullets')
+    if isinstance(bullets, list) and bullets:
+        body = "\n".join(f"▪️ {str(b).replace('`', '')}" for b in bullets)
+    else:
+        # Обратная совместимость со старым форматом
+        body = news_item.get('description', '').replace('`', '')
+
+    parts = [f"{emoji} *{title}*", "", body]
+
+    hashtags = news_item.get('hashtags')
+    if isinstance(hashtags, list) and hashtags:
+        parts.append("")
+        parts.append(" ".join(hashtags[:4]))
+
+    return "\n".join(parts)
+
+
 def format_news_text(news_item, max_length=MAX_MESSAGE_LENGTH):
     """
     Форматирует новость для Telegram с автоматической обрезкой при необходимости
     """
-    # Не экранируем title и description, так как они содержат наше форматирование
-    # Но очищаем потенциально опасные символы
-    title = news_item['title'].replace('`', '')
-    description = news_item['description'].replace('`', '')
-    
-    text = f"📰 *{title}*\n\n{description}\n\n🔗 [Ссылка на источник]({news_item['link']})"
-    
+    body = build_news_body(news_item)
+    text = f"{body}\n\n🔗 [Ссылка на источник]({news_item['link']})"
+
     # Проверяем длину и обрезаем при необходимости
     if len(text) <= max_length:
         return text
@@ -145,88 +190,204 @@ async def send_news_to_admin(application: Application):
 
 
 
-async def schedule_auto_posting(application: Application):
-    """Планирует автоматическую публикацию новостей"""
+def load_current_cycle_news(max_age_hours=3):
+    """
+    Возвращает обработанные новости только из текущего цикла
+    (по метке processed_at), отсекая остатки прошлых циклов.
+    """
     all_news = load_news()
-    rejected = load_rejected_news()
-    
-    # Фильтруем новости по времени обработки - только из текущего цикла
-    # Цикл каждые 2 часа, берем новости не старше 2 часов для запаса
     current_time = time.time()
-    max_age_seconds = 2 * 60 * 60  # 2 часа
-    
+    max_age_seconds = max_age_hours * 60 * 60
+
     news = []
     old_news_count = 0
     for item in all_news:
-        processed_at = item.get("processed_at", 0)
-        age_seconds = current_time - processed_at
-        
+        age_seconds = current_time - item.get("processed_at", 0)
         if age_seconds <= max_age_seconds:
             news.append(item)
         else:
             old_news_count += 1
-            print(f"⏰ Пропущена старая новость (возраст: {age_seconds/3600:.1f}ч): {item.get('title', '')[:50]}...")
-    
+
     if old_news_count > 0:
         print(f"🗑️  Отфильтровано {old_news_count} новостей из предыдущих циклов")
-    
+    return news
+
+
+async def schedule_auto_posting(application: Application):
+    """
+    Авто-режим: маршрутизирует новости текущего цикла по важности.
+      • importance >= URGENT_THRESHOLD  → публикуем сразу отдельным постом;
+      • остальное                        → копим в буфер дайджеста.
+    Публикацией дайджеста занимается publish_digest по расписанию (3 слота в день).
+    """
+    news = load_current_cycle_news()
+    rejected = load_rejected_news()
+
     if not news:
         if ADMIN_CHAT_ID:
             await application.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
-                text=f"ℹ️ Нет новостей для публикации из текущего цикла.\n🚫 Отклонено AI: {len(rejected)}\n⏰ Старых новостей: {old_news_count}"
+                text=(
+                    f"ℹ️ Нет новостей из текущего цикла.\n"
+                    f"🚫 Отклонено AI: {len(rejected)}\n"
+                    f"🗂 В буфере дайджеста: {pending_count()}"
+                )
             )
         return
 
-    # Формула: 2 часа / (количество новостей + 2)
-    # 2 часа = 120 минут
-    interval_minutes = 120 / (len(news) + 2)
-    
-    scheduler = application.bot_data.get("scheduler")
-    if not scheduler:
-        print("⚠️ Scheduler not found in bot_data")
-        return
+    urgent = [n for n in news if n.get("importance", 0) >= URGENT_THRESHOLD]
+    routine = [n for n in news if n.get("importance", 0) < URGENT_THRESHOLD]
 
-    # Очищаем старые задачи публикации (если есть)
-    for job in scheduler.get_jobs():
-        if job.id.startswith("auto_post_"):
-            job.remove()
+    # Срочные — сразу в канал (обходят тихие часы и дайджест)
+    published_urgent = []
+    for item in urgent:
+        try:
+            await publish_news(application.bot, item)
+            published_urgent.append(item)
+        except Exception as e:
+            print(f"⚠️ Ошибка публикации срочной новости: {e}")
 
-    scheduled_info = []
-    now = datetime.now()
-    
-    for i, item in enumerate(news):
-        run_date = now + timedelta(minutes=interval_minutes * (i + 1))
-        job_id = f"auto_post_{i}"
-        
-        scheduler.add_job(
-            publish_news,
-            'date',
-            run_date=run_date,
-            args=[application.bot, item],
-            id=job_id
-        )
-        scheduled_info.append(f"{i+1}. {item['title'][:30]}... в {run_date.strftime('%H:%M')}")
+    # Рутина — в буфер дайджеста
+    added = add_to_digest(routine)
 
-    # Отчет админу
+    # Отчёт админу
     if ADMIN_CHAT_ID:
-        rejected_summary = "\n".join([f"- {r['title'][:30]}... ({r['reason']})" for r in rejected[:5]])
-        if len(rejected) > 5:
-            rejected_summary += f"\n... и еще {len(rejected) - 5}"
-            
+        urgent_summary = "\n".join(f"🚨 {i['title'][:40]}..." for i in published_urgent) or "—"
         report = (
-            f"🤖 *Автоматический режим*\n\n"
-            f"✅ Одобрено: {len(news)}\n"
-            f"🚫 Отклонено: {len(rejected)}\n\n"
-            f"📅 *Расписание публикации:*\n" + "\n".join(scheduled_info) + "\n\n"
-            f"🗑 *Причины отклонения (топ-5):*\n{rejected_summary if rejected else 'Нет отклоненных новостей'}"
+            f"🤖 *Авто-режим: маршрутизация*\n\n"
+            f"✅ Обработано из цикла: {len(news)}\n"
+            f"🚨 Срочных опубликовано сразу: {len(published_urgent)}\n"
+            f"🗂 Добавлено в дайджест: {added}\n"
+            f"📦 Всего в буфере дайджеста: {pending_count()}\n"
+            f"🚫 Отклонено AI: {len(rejected)}\n\n"
+            f"*Срочные:*\n{urgent_summary}"
         )
-        
         await application.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=report,
             parse_mode="Markdown"
         )
+
+
+def build_digest_messages(items, header=None):
+    """
+    Собирает дайджест из буфера: группировка по рубрикам, каждый пункт —
+    одна короткая строка-заголовок со ссылкой на источник.
+    Возвращает список сообщений (разбитых по лимиту Telegram).
+    """
+    # Группируем по рубрикам
+    by_cat = {}
+    for it in items:
+        cat = it.get("category", "other")
+        by_cat.setdefault(cat, []).append(it)
+
+    blocks = []
+    for cat in CATEGORY_ORDER:
+        cat_items = by_cat.get(cat)
+        if not cat_items:
+            continue
+        lines = [f"{category_emoji(cat)} *{category_label(cat)}*"]
+        for it in cat_items:
+            title = it.get("title", "").replace("`", "").replace("[", "(").replace("]", ")")
+            link = it.get("link", "")
+            if link:
+                lines.append(f"▪️ [{title}]({link})")
+            else:
+                lines.append(f"▪️ {title}")
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return []
+
+    # Собираем блоки в сообщения с учётом лимита длины (рубрики через пустую строку)
+    messages = []
+    current = header.strip() if header else ""
+    for block in blocks:
+        candidate = (current + "\n\n" + block) if current else block
+        if len(candidate) > MAX_MESSAGE_LENGTH and current:
+            messages.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        messages.append(current)
+    return messages
+
+
+async def publish_digest(bot):
+    """
+    Публикует накопленный дайджест в канал одним (или несколькими) сообщениями
+    и очищает буфер. Дубли отсекаются по истории публикаций.
+    """
+    items = load_pending()
+    if not items:
+        print("🗂 Буфер дайджеста пуст — публиковать нечего")
+        return
+
+    # Отсекаем то, что уже выходило (например, срочным постом или в прошлом дайджесте)
+    fresh = []
+    skipped_dup = 0
+    for it in items:
+        dup = check_duplicate(
+            title=it.get("title", ""),
+            text=it.get("description", ""),
+            similarity_threshold=0.85,
+        )
+        if dup["is_duplicate"]:
+            skipped_dup += 1
+        else:
+            fresh.append(it)
+
+    if not fresh:
+        print(f"🗂 Все {len(items)} новостей из буфера — дубли, дайджест не публикуем")
+        clear_pending()
+        return
+
+    now = datetime.now()
+    header = f"🗞 *Дайджест новостей Испании*\n_{now.strftime('%d.%m, %H:%M')} · {len(fresh)} новостей_"
+    messages = build_digest_messages(fresh, header=header)
+
+    for msg in messages:
+        await bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=msg,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+
+    # Помечаем как опубликованные и чистим буфер
+    for it in fresh:
+        add_published_news(
+            title=it.get("title", ""),
+            text=it.get("description", ""),
+            url=it.get("link", ""),
+        )
+    clear_pending()
+
+    print(f"✅ Дайджест опубликован: {len(fresh)} новостей ({len(messages)} сообщ.), дублей пропущено: {skipped_dup}")
+
+    if ADMIN_CHAT_ID:
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    f"🗞 Дайджест опубликован\n"
+                    f"✅ Новостей: {len(fresh)}\n"
+                    f"🗑 Дублей пропущено: {skipped_dup}\n"
+                    f"✉️ Сообщений: {len(messages)}"
+                ),
+            )
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить отчёт админу: {e}")
+
+
+async def publish_digest_job(bot):
+    """Обёртка для планировщика: уважает тихие часы."""
+    if in_quiet_hours():
+        print("🌙 Тихие часы — дайджест отложен до следующего слота")
+        return
+    await publish_digest(bot)
+
 
 async def send_next_news_to_admin(application: Application):
     """Отправляет следующую новость админу"""

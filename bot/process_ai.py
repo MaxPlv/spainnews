@@ -6,6 +6,7 @@ import json
 import time
 import re
 import random
+import hashlib
 import traceback
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -16,6 +17,9 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 # --------------------------------
+
+# Общая таксономия рубрик (bot/categories.py)
+from categories import CATEGORIES, normalize_category
 
 # Загрузка .env файла (если нужен)
 def load_env_file():
@@ -39,6 +43,20 @@ if not API_KEY:
 DUPLICATE_THRESHOLD = 0.8
 RUSSIAN_TEXT_THRESHOLD = 0.8
 MAX_TELEGRAM_LENGTH = 4000
+
+# Формат карточки новости ("фаст-фуд")
+MIN_BULLETS = 2          # минимум пунктов в новости
+MAX_BULLETS = 3          # максимум пунктов (остальное отбрасываем)
+MAX_BULLET_WORDS = 18    # мягкий ориентир длины пункта для промпта
+
+# Экономия токенов Gemini: в модель отдаём заголовок + первые абзацы статьи.
+# Новости построены по "перевёрнутой пирамиде" — суть в начале, поэтому для
+# сводки из 2-3 буллитов ~4000 символов достаточно. Можно поднять через env.
+MAX_MODEL_INPUT_CHARS = int(os.getenv("MAX_MODEL_INPUT_CHARS", "4000"))
+MAX_ARTICLE_FETCH_CHARS = 6000  # верхняя граница парсинга статьи (с запасом над входом)
+# Версия промпта — часть ключа кэша, чтобы при смене промпта старые ответы не переиспользовались
+PROMPT_VERSION = "v2-bullets"
+
 INPUT_FILE = "news_raw.json"
 
 OUTPUT_FILE = "result_news.json"
@@ -116,7 +134,7 @@ def fetch_article_content(url):
         if not article_text or len(article_text) < 200:
             ps = soup.find_all('p')
             article_text = ' '.join([p.get_text().strip() for p in ps if p.get_text().strip()])
-        return article_text[:10000] if article_text else ""
+        return article_text[:MAX_ARTICLE_FETCH_CHARS] if article_text else ""
     except Exception as e:
         print(f"   ⚠️ Ошибка загрузки статьи: {e}")
         return ""
@@ -184,30 +202,58 @@ def parse_json_from_text(text):
         print(f"   ⚠️ JSON parsing error: {e}")
         return None
 
+def _coerce_bullets(value):
+    """Приводит поле bullets к списку непустых строк."""
+    if isinstance(value, list):
+        items = [str(b).strip() for b in value if str(b).strip()]
+    elif isinstance(value, str) and value.strip():
+        # Иногда модель возвращает пункты одной строкой через перенос/маркеры
+        items = [ln.strip(" -•*\t") for ln in value.splitlines() if ln.strip(" -•*\t")]
+    else:
+        items = []
+    return items[:MAX_BULLETS]
+
+
+def _coerce_importance(value):
+    """Приводит importance к целому 1..10 (по умолчанию 5)."""
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return 5
+    return max(1, min(10, n))
+
+
 def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay=BASE_RETRY_DELAY):
     """
     Делает один (логический) запрос к Gemini, который должен вернуть JSON:
-    { "title_ru": "...", "summary_ru": "...", "hashtags": ["#a","#b"] }
+    { "title_ru": "...", "bullets": ["...","..."], "importance": 7,
+      "category": "politics", "hashtags": ["#a","#b"] }
     Возвращает dict или выбрасывает Exception.
     """
-    # Промпт: просим возвращать чистый JSON в кодовом блоке или без него.
+    # Промпт: формат "фаст-фуд" — цепляющий заголовок + 2-3 коротких пункта.
     prompt = (
-        "Ты редактор новостного Telegram-канала про жизнь в Испании.\n\n"
-        "1) На основе следующего текста статьи создай КРАТКИЙ заголовок на русском (до 10 слов) — поле title_ru.\n"
-        "2) Пиши в стиле Александра Невзорова, но на 60% от его стиля.\n"
-        "3) Создай краткую выжимку на русском (5-6 предложений; разделяй на абзацы, если уместно; максимум 4000 символов) — поле summary_ru.\n"
-        "4) Подбери 3-4 хэштега по содержанию (без пробелов, с #) — поле hashtags (массив строк).\n\n"
-        "ВАЖНО: НЕ упоминай в тексте или заголовке, что используешь стиль Невзорова или любого другого журналиста. "
-        "НЕ добавляй фразы типа 'Невзоров стайл', 'в стиле...', или подобные комментарии о стиле написания. "
-        "Просто пиши в указанном стиле, но без упоминания этого факта.\n\n"
-        "ВЕРНИ СТРОГО JSON ОБЪЕКТ С ПОЛЯМИ: title_ru, summary_ru, hashtags.\n"
-        "Пример корректного ответа:\n"
-        '{"title_ru":"...","summary_ru":"...","hashtags":["#madrid","#immigration"]}\n\n'
+        "Ты редактор новостного Telegram-канала про жизнь в Испании.\n"
+        "Формат канала — быстрый и лёгкий: короткие карточки, которые читаются за пару секунд.\n\n"
+        "На основе следующего текста статьи верни СТРОГО JSON-объект с полями:\n"
+        f"1) title_ru — цепляющий заголовок-суть на русском, до 8 слов, без кликбейта и без точки в конце.\n"
+        f"2) bullets — массив из {MIN_BULLETS}-{MAX_BULLETS} очень коротких пунктов на русском "
+        f"(каждый до {MAX_BULLET_WORDS} слов): что случилось, ключевая деталь или цифра, последствие. "
+        "Только факты, без вводных слов и без воды.\n"
+        "3) importance — целое число от 1 до 10: насколько новость важна и срочна для широкой аудитории "
+        "(10 = экстренное: катастрофа, теракт, отставка правительства, крупная авария; 1 = проходная заметка).\n"
+        "4) category — РОВНО одна из строк: " + ", ".join(CATEGORIES) + ".\n"
+        "5) hashtags — массив из 3-4 хэштегов по содержанию (без пробелов, с #).\n\n"
+        "Пиши живо и по-человечески, но кратко. НЕ упоминай стиль письма и не добавляй комментариев о нём.\n"
+        "ВЕРНИ ТОЛЬКО JSON. Пример корректного ответа:\n"
+        '{"title_ru":"...","bullets":["...","..."],"importance":6,"category":"politics",'
+        '"hashtags":["#madrid","#gobierno"]}\n\n'
         "Текст статьи:\n\n" + article_text
     )
 
     cache = load_cache()
-    cache_key = str(hash(prompt))
+    # Стабильный ключ по содержимому статьи (+версия промпта) — работает между запусками,
+    # в отличие от рандомизированного hash(). Экономит повторные вызовы для тех же новостей.
+    cache_key = hashlib.sha256((PROMPT_VERSION + "\n" + article_text).encode("utf-8")).hexdigest()
     if cache_key in cache:
         # Возвращаем закешированный ответ
         return cache[cache_key]
@@ -223,8 +269,8 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
                 model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2100,
+                    temperature=0.4,
+                    max_output_tokens=800,
                     response_mime_type="application/json"
                 )
             )
@@ -233,54 +279,41 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
                 text = response.text
             else:
                 raise Exception("No text in response from model")
-            
+
             print(f"   📨 Gemini response length: {len(text)} chars")
             print(f"   📝 First 300 chars of raw response: {text[:300]}")
-            
+
             text = clean_ai_response(text)
 
-            # Попробуем парсить JSON
+            # Парсим JSON (для нового формата ручной фолбэк непрактичен — при неудаче ретраим/fallback модели)
             parsed = parse_json_from_text(text)
             print(f"   🔍 JSON parsing result: {type(parsed)} {'(dict)' if isinstance(parsed, dict) else '(failed)'}")
-            if parsed and isinstance(parsed, dict):
-                # Небольшая валидация
-                title = parsed.get("title_ru", "").strip()
-                summary = parsed.get("summary_ru", "").strip()
-                hashtags = parsed.get("hashtags", [])
-                if title and summary and isinstance(hashtags, list) and len(hashtags) >= 1:
-                    result = {"title_ru": title, "summary_ru": summary, "hashtags": hashtags}
-                    cache[cache_key] = result
-                    save_cache(cache)
-                    return result
-                # если невалидно — попытаемся дальше (кастом)
-            # Если не JSON — пытаемся извлечь заголовок/хэштеги вручную
-            # Пробуем найти хэштеги в ответе
-            found_tags = re.findall(r'#\w+', text)
-            # Попытка извлечь первые 200 символов как заголовок-предположение
-            guessed_title = None
-            # Иногда модель возвращает "title: ..." в тексте
-            m = re.search(r'(?:title[:\-]\s*)(.+)', text, re.IGNORECASE)
-            if m:
-                guessed_title = m.group(1).split('\n')[0].strip()
-            if not guessed_title:
-                # первая строка как заголовок
-                first_line = text.splitlines()[0].strip() if text.splitlines() else ""
-                if 3 <= len(first_line.split()) <= 12:
-                    guessed_title = first_line
-            guessed_summary = text
+            if not (parsed and isinstance(parsed, dict)):
+                raise Exception("Model did not return a valid JSON object")
+
+            title = str(parsed.get("title_ru", "")).strip()
+            bullets = _coerce_bullets(parsed.get("bullets"))
+            hashtags = parsed.get("hashtags", [])
+            if isinstance(hashtags, str):
+                hashtags = re.findall(r'#\w+', hashtags)
+            importance = _coerce_importance(parsed.get("importance"))
+            category = normalize_category(parsed.get("category"))
+
+            if not title or len(bullets) < MIN_BULLETS or not isinstance(hashtags, list):
+                raise Exception(
+                    f"Incomplete response: title={bool(title)}, bullets={len(bullets)}, "
+                    f"hashtags={type(hashtags).__name__}"
+                )
+
             result = {
-                "title_ru": guessed_title or "",
-                "summary_ru": guessed_summary or text,
-                "hashtags": found_tags or []
+                "title_ru": title,
+                "bullets": bullets,
+                "importance": importance,
+                "category": category,
+                "hashtags": hashtags,
             }
-            # Сохраняем в кэш для последующих попыток
             cache[cache_key] = result
             save_cache(cache)
-
-            # Валидация: если пустой title или summary — бросаем ошибку, чтобы ретраить/fallback
-            if not result["title_ru"] or not result["summary_ru"]:
-                raise Exception("Invalid/empty parsed response from model")
-
             return result
 
         except Exception as e:
@@ -339,8 +372,7 @@ def main():
     processed_news = []
     rejected_news = []
     seen_titles = []  # исходные заголовки из RSS
-    seen_processed_titles = []  # переписанные AI заголовки
-    cache = load_cache()
+    seen_processed_titles = []  # переписанные AI заголовки (кэш ответов ведётся внутри gemini_request_single_json)
 
     for idx, news in enumerate(news_items, start=1):
         try:
@@ -368,7 +400,7 @@ def main():
                 else:
                     print("   ⚠️ Полный текст не получен, используем description")
 
-            text_for_model = (title + ". " + (article_content or description or title))[:12000]
+            text_for_model = (title + ". " + (article_content or description or title))[:MAX_MODEL_INPUT_CHARS]
 
             # Минимальная задержка между вызовами к Gemini
             print(f"   💤 Ждём {GLOBAL_DELAY}s перед запросом к Gemini (глобальный rate limit)")
@@ -377,7 +409,7 @@ def main():
             print(f"   🤖 Отправляем запрос к Gemini...")
             try:
                 ai_result = gemini_request_single_json(text_for_model)
-                print(f"   ✨ Получен ответ от Gemini: title_ru={bool(ai_result.get('title_ru'))}, summary_ru_length={len(ai_result.get('summary_ru', ''))}, hashtags_count={len(ai_result.get('hashtags', []))}")
+                print(f"   ✨ Получен ответ от Gemini: title_ru={bool(ai_result.get('title_ru'))}, bullets={len(ai_result.get('bullets', []))}, importance={ai_result.get('importance')}, category={ai_result.get('category')}, hashtags_count={len(ai_result.get('hashtags', []))}")
             except Exception as e:
                 print(f"   ❌ Проблема с Gemini: {e}")
                 print(f"   📋 Full traceback:")
@@ -385,73 +417,75 @@ def main():
                 rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
                 continue
 
-            # Формируем итоговые поля (сохраняем в прежнем формате)
+            # Формируем итоговые поля нового формата (заголовок + буллиты)
             rewritten_title = ai_result.get("title_ru", "").strip()
-            rewritten_text = ai_result.get("summary_ru", "").strip()
+            bullets = ai_result.get("bullets", [])
             hashtags = ai_result.get("hashtags", [])
-            
-            print(f"   📝 AI результат: title='{rewritten_title[:50]}...', text_length={len(rewritten_text)}, hashtags={hashtags}")
-            
-            # Чистим проблемные символы, которые могут сломать Telegram Markdown
-            # Удаляем обратные кавычки
-            rewritten_title = rewritten_title.replace('`', '')
-            rewritten_text = rewritten_text.replace('`', '')
-            
-            # Удаляем одиночные звездочки и подчеркивания, которые не являются парными
-            # (оставляя хэштеги нетронутыми)
-            rewritten_title = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_title)
-            rewritten_text = re.sub(r'(?<!\*)\*(?!\*)', '', rewritten_text)
-            rewritten_title = re.sub(r'(?<!_)_(?!_)', '', rewritten_title)
-            rewritten_text = re.sub(r'(?<!_)_(?!_)', '', rewritten_text)
+            importance = _coerce_importance(ai_result.get("importance"))
+            category = normalize_category(ai_result.get("category"))
 
-            # Валидации как раньше
+            def _clean_md(s):
+                """Убирает символы, ломающие Telegram Markdown (backtick, непарные * и _)."""
+                s = s.replace('`', '')
+                s = re.sub(r'(?<!\*)\*(?!\*)', '', s)
+                s = re.sub(r'(?<!_)_(?!_)', '', s)
+                return s.strip()
+
+            rewritten_title = _clean_md(rewritten_title)
+            bullets = [_clean_md(b) for b in bullets if _clean_md(b)]
+
+            print(f"   📝 AI результат: title='{rewritten_title[:50]}...', bullets={len(bullets)}, importance={importance}, category={category}, hashtags={hashtags}")
+
+            # Текст для валидаций на русский язык / дубли / лимит длины (буллиты одной строкой)
+            bullets_text = " ".join(bullets)
+
+            # Валидации
             print(f"   🔍 Начинаем валидацию результатов...")
             if not rewritten_title:
                 print("   ⚠️ Пустой заголовок от модели, пропускаем")
                 rejected_news.append({"title": title, "reason": "empty_title"})
                 continue
-            if not rewritten_text:
-                print("   ⚠️ Пустой summary от модели, пропускаем")
-                rejected_news.append({"title": title, "reason": "empty_summary"})
+            if len(bullets) < MIN_BULLETS:
+                print(f"   ⚠️ Мало пунктов ({len(bullets)}), пропускаем")
+                rejected_news.append({"title": title, "reason": "few_bullets"})
                 continue
             if not is_russian_text(rewritten_title):
                 print(f"   ⚠️ Заголовок не на русском >=80%, пропускаем (title: '{rewritten_title[:50]}')")
                 rejected_news.append({"title": title, "reason": "not_russian_title"})
                 continue
-            if not is_russian_text(rewritten_text):
-                print(f"   ⚠️ Текст не на русском >=80%, пропускаем")
+            if not is_russian_text(bullets_text):
+                print(f"   ⚠️ Пункты не на русском >=80%, пропускаем")
                 rejected_news.append({"title": title, "reason": "not_russian_text"})
                 continue
             if not hashtags or len(hashtags) < 2:
                 print(f"   ⚠️ Мало хэштегов ({len(hashtags)}), пропускаем")
                 rejected_news.append({"title": title, "reason": "few_hashtags"})
                 continue
-            # Проверка на упоминание "Невзоров" в заголовке или тексте
-            if "невзоров" in rewritten_title.lower() or "невзоров" in rewritten_text.lower():
-                print("   ⚠️ Упоминание 'Невзоров' в тексте/заголовке, пропускаем")
-                rejected_news.append({"title": title, "reason": "nevzorov_mention"})
-                continue
-            # Проверка на дубликат среди переписанных заголовков (для отлова одинаковых событий из разных источников)
+            # Проверка на дубликат среди переписанных заголовков (одно событие из разных источников)
             if is_duplicate(rewritten_title, seen_processed_titles):
                 print(f"   ⚠️ Дубликат переписанного заголовка (одно событие из разных источников), пропускаем")
                 rejected_news.append({"title": title, "reason": "duplicate_processed"})
                 continue
             seen_processed_titles.append(rewritten_title)
-            # Добавляем хэштеги в конец summary, если их нет
-            if not re.search(r'#\w+', rewritten_text):
-                rewritten_text = rewritten_text.rstrip() + "\n\n" + " ".join(hashtags[:4])
 
-            if not is_telegram_compatible(rewritten_title, rewritten_text, link):
-                print(f"   ⚠️ Превышает лимит Telegram (length={len(rewritten_text)}), пропускаем")
+            # description — плоский текст из буллитов (для трекера дублей и обратной совместимости)
+            description = "\n".join(f"• {b}" for b in bullets)
+
+            if not is_telegram_compatible(rewritten_title, description, link):
+                print(f"   ⚠️ Превышает лимит Telegram (length={len(description)}), пропускаем")
                 rejected_news.append({"title": title, "reason": "telegram_limit"})
                 continue
 
-            print(f"   ✅ ОК: {rewritten_title[:60]} / summary {len(rewritten_text)} chars / tags {len(hashtags)}")
+            print(f"   ✅ ОК: {rewritten_title[:60]} / {len(bullets)} пунктов / importance {importance} / {category} / tags {len(hashtags)}")
 
             processed_news.append({
                 "title": rewritten_title,
+                "bullets": bullets,
+                "importance": importance,
+                "category": category,
+                "hashtags": hashtags,
                 "link": link,
-                "description": rewritten_text,
+                "description": description,
                 "published": news.get("published", ""),
                 "author": news.get("author", ""),
                 "categories": news.get("categories", []),
