@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import html
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -278,9 +279,11 @@ async def schedule_auto_posting(application: Application):
 
 def build_digest_messages(items, header=None):
     """
-    Собирает дайджест из буфера: группировка по рубрикам, каждый пункт —
-    одна короткая строка-заголовок со ссылкой на источник.
-    Возвращает список сообщений (разбитых по лимиту Telegram).
+    Собирает дайджест из буфера: группировка по рубрикам. Каждый пункт —
+    заголовок с явной пометкой 🇪🇸-ссылки на оригинал и разворачивающейся
+    цитатой с короткими буллитами на русском (без перехода на сайт).
+    HTML-разметка (Telegram parse_mode="HTML"). Возвращает список
+    сообщений, разбитых по лимиту Telegram.
     """
     # Группируем по рубрикам
     by_cat = {}
@@ -293,14 +296,19 @@ def build_digest_messages(items, header=None):
         cat_items = by_cat.get(cat)
         if not cat_items:
             continue
-        lines = [f"{category_emoji(cat)} *{category_label(cat)}*"]
+        lines = [f"{category_emoji(cat)} <b>{category_label(cat)}</b>"]
         for it in cat_items:
-            title = it.get("title", "").replace("`", "").replace("[", "(").replace("]", ")")
+            title = html.escape(it.get("title", ""))
             link = it.get("link", "")
-            if link:
-                lines.append(f"▪️ [{title}]({link})")
+            link_html = f' <a href="{html.escape(link)}">🇪🇸</a>' if link else ""
+            head = f"▪️ <b>{title}</b>{link_html}"
+
+            bullets = [str(b).strip() for b in (it.get("bullets") or []) if str(b).strip()]
+            if bullets:
+                bullet_html = "\n".join(f"• {html.escape(b)}" for b in bullets)
+                lines.append(f"{head}\n<blockquote expandable>{bullet_html}</blockquote>")
             else:
-                lines.append(f"▪️ {title}")
+                lines.append(head)
         blocks.append("\n".join(lines))
 
     if not blocks:
@@ -351,14 +359,14 @@ async def publish_digest(bot):
         return
 
     now = datetime.now(LOCAL_TZ)
-    header = f"🗞 *Дайджест новостей Испании*\n_{now.strftime('%d.%m, %H:%M')} · {len(fresh)} новостей_"
+    header = f"🗞 <b>Дайджест новостей Испании</b>\n<i>{now.strftime('%d.%m, %H:%M')} · {len(fresh)} новостей</i>"
     messages = build_digest_messages(fresh, header=header)
 
     for msg in messages:
         await bot.send_message(
             chat_id=CHANNEL_ID,
             text=msg,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
 
