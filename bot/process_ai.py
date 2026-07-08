@@ -223,6 +223,19 @@ def _coerce_importance(value):
     return max(1, min(10, n))
 
 
+def _coerce_bool(value, default):
+    """Приводит значение к bool; при отсутствии/невалидности — безопасный дефолт."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "да"):
+            return True
+        if v in ("false", "0", "no", "нет"):
+            return False
+    return default
+
+
 def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay=BASE_RETRY_DELAY):
     """
     Делает один (логический) запрос к Gemini, который должен вернуть JSON:
@@ -242,11 +255,17 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
         "3) importance — целое число от 1 до 10: насколько новость важна и срочна для широкой аудитории "
         "(10 = экстренное: катастрофа, теракт, отставка правительства, крупная авария; 1 = проходная заметка).\n"
         "4) category — РОВНО одна из строк: " + ", ".join(CATEGORIES) + ".\n"
-        "5) hashtags — массив из 3-4 хэштегов по содержанию (без пробелов, с #).\n\n"
+        "5) hashtags — массив из 3-4 хэштегов по содержанию (без пробелов, с #).\n"
+        "6) spain_focus — true/false: Испания является ГЛАВНОЙ темой статьи (место действия, кто\n"
+        "   действует, кого касается), а не просто мельком упомянута (например, статья о ЧМ по футболу,\n"
+        "   где просто упомянут клуб или город испанского футболиста, — это НЕ spain_focus, верни false).\n"
+        "7) israel_related — true/false: статья каким-либо образом связана с Израилем, Палестиной,\n"
+        "   Газой, Западным берегом, ХАМАС, Хезболлой или израильско-палестинским конфликтом\n"
+        "   (даже если Израиль упомянут только частично или как одна из сторон события).\n\n"
         "Пиши живо и по-человечески, но кратко. НЕ упоминай стиль письма и не добавляй комментариев о нём.\n"
         "ВЕРНИ ТОЛЬКО JSON. Пример корректного ответа:\n"
         '{"title_ru":"...","bullets":["...","..."],"importance":6,"category":"politics",'
-        '"hashtags":["#madrid","#gobierno"]}\n\n'
+        '"hashtags":["#madrid","#gobierno"],"spain_focus":true,"israel_related":false}\n\n'
         "Текст статьи:\n\n" + article_text
     )
 
@@ -298,6 +317,10 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
                 hashtags = re.findall(r'#\w+', hashtags)
             importance = _coerce_importance(parsed.get("importance"))
             category = normalize_category(parsed.get("category"))
+            # Дефолты выбраны в сторону базовой частоты: большинство статей после
+            # RSS-фильтра действительно про Испанию и не про Израиль.
+            spain_focus = _coerce_bool(parsed.get("spain_focus"), default=True)
+            israel_related = _coerce_bool(parsed.get("israel_related"), default=False)
 
             if not title or len(bullets) < MIN_BULLETS or not isinstance(hashtags, list):
                 raise Exception(
@@ -311,6 +334,8 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
                 "importance": importance,
                 "category": category,
                 "hashtags": hashtags,
+                "spain_focus": spain_focus,
+                "israel_related": israel_related,
             }
             cache[cache_key] = result
             save_cache(cache)
@@ -415,6 +440,18 @@ def main():
                 print(f"   📋 Full traceback:")
                 traceback.print_exc()
                 rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
+                continue
+
+            # Семантическая проверка темы (AI понимает контекст лучше keyword-фильтра
+            # на этапе fetch_news.py — например, ловит статьи, где Испания упомянута
+            # только мельком, а не является главной темой)
+            if not ai_result.get("spain_focus", True):
+                print("   ⚠️ AI определил: не про Испанию по существу, пропускаем")
+                rejected_news.append({"title": title, "reason": "not_spain_focus"})
+                continue
+            if ai_result.get("israel_related", False):
+                print("   ⚠️ AI определил: связано с Израилем, пропускаем (политика канала)")
+                rejected_news.append({"title": title, "reason": "israel_related_excluded"})
                 continue
 
             # Формируем итоговые поля нового формата (заголовок + буллиты)

@@ -183,19 +183,39 @@ def is_not_advertisement(text):
     return weak_count < 3
 
 
+def is_israel_related(text):
+    """
+    Быстрый предварительный фильтр новостей об Израиле/палестино-израильском
+    конфликте (испанские СМИ освещают тему с заметным перекосом — решили не
+    публиковать вовсе). Это дешёвая проверка по ключевым словам ДО вызова
+    Gemini — экономит токены на явных случаях. Финальное решение всё равно
+    принимает AI (process_ai.py), т.к. ключевые слова не ловят все формулировки.
+    """
+    text_lower = text.lower()
+    israel_keywords = [
+        "israel", "israelí", "israelíes", "israelo",
+        "gaza", "franja de gaza", "cisjordania",
+        "palestina", "palestino",
+        "hamás", "hamas", "hezbolá", "hezbollah",
+        "netanyahu", "tel aviv", "jerusalén",
+    ]
+    return any(keyword in text_lower for keyword in israel_keywords)
+
+
 def is_valid_news(news_item):
-    """Проверяет, является ли новость валидной (про Испанию и не реклама)"""
+    """Проверяет, является ли новость валидной (про Испанию, не реклама, не про Израиль)"""
     title = news_item.get('title', '')
     description = news_item.get('description', '')
-    
+
     # Объединяем заголовок и описание для проверки
     full_text = f"{title} {description}"
-    
-    # Проверяем оба условия
+
+    # Проверяем условия
     spain_related = is_spain_related(full_text)
     not_ad = is_not_advertisement(full_text)
-    
-    return spain_related and not_ad
+    not_israel = not is_israel_related(full_text)
+
+    return spain_related and not_ad and not_israel
 
 
 def fetch_recent_news(max_age_hours=2):
@@ -283,40 +303,39 @@ if __name__ == "__main__":
     
     print(f"✨ Уникальных новостей: {len(unique_news)}\n")
 
-    # Фильтруем новости: оставляем только про Испанию и не рекламные
+    # Фильтруем новости: оставляем только про Испанию, не рекламные и не про Израиль
     filtered_news = []
     rejected_count = 0
-    rejected_reasons = {
-        'not_spain': 0,
-        'advertisement': 0,
-        'both': 0
-    }
+    rejected_reasons = {'not_spain': 0, 'advertisement': 0, 'israel_related': 0}
 
     for news_item in unique_news:
-        spain_related = is_spain_related(f"{news_item['title']} {news_item['description']}")
-        not_ad = is_not_advertisement(f"{news_item['title']} {news_item['description']}")
-        
-        if spain_related and not_ad:
+        full_text = f"{news_item['title']} {news_item['description']}"
+        spain_related = is_spain_related(full_text)
+        not_ad = is_not_advertisement(full_text)
+        israel_related = is_israel_related(full_text)
+
+        if spain_related and not_ad and not israel_related:
             filtered_news.append(news_item)
         else:
             rejected_count += 1
-            # Определяем причину отклонения
-            if not spain_related and not not_ad:
-                rejected_reasons['both'] += 1
-                reason = "не про Испанию + реклама"
-            elif not spain_related:
+            # Собираем все причины отклонения (новость может не пройти сразу по нескольким)
+            failed = []
+            if not spain_related:
                 rejected_reasons['not_spain'] += 1
-                reason = "не про Испанию"
-            else:
+                failed.append("не про Испанию")
+            if not not_ad:
                 rejected_reasons['advertisement'] += 1
-                reason = "реклама"
-            
-            print(f"❌ Отклонено ({reason}): {news_item['title'][:60]}...")
+                failed.append("реклама")
+            if israel_related:
+                rejected_reasons['israel_related'] += 1
+                failed.append("про Израиль")
+
+            print(f"❌ Отклонено ({' + '.join(failed)}): {news_item['title'][:60]}...")
 
     print(f"\n🚫 Отклонено {rejected_count} новостей:")
     print(f"   📍 Не про Испанию: {rejected_reasons['not_spain']}")
     print(f"   🛒 Реклама: {rejected_reasons['advertisement']}")
-    print(f"   ⚠️  Оба критерия: {rejected_reasons['both']}")
+    print(f"   🇮🇱 Про Израиль (исключено): {rejected_reasons['israel_related']}")
     print(f"✅ Прошло проверку: {len(filtered_news)} новостей\n")
     
     # Выводим информацию о новостях
