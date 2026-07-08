@@ -20,6 +20,7 @@ from google.genai import types
 
 # Общая таксономия рубрик (bot/categories.py)
 from categories import CATEGORIES, normalize_category
+from paths import DATA_DIR
 
 # Загрузка .env файла (если нужен)
 def load_env_file():
@@ -57,12 +58,11 @@ MAX_ARTICLE_FETCH_CHARS = 6000  # верхняя граница парсинга
 # Версия промпта — часть ключа кэша, чтобы при смене промпта старые ответы не переиспользовались
 PROMPT_VERSION = "v2-bullets"
 
-INPUT_FILE = "news_raw.json"
-
-OUTPUT_FILE = "result_news.json"
-REJECTED_FILE = "rejected_news.json"
-IMAGES_DIR = "processed_images"
-CACHE_FILE = "gemini_cache.json"
+INPUT_FILE = DATA_DIR / "news_raw.json"
+OUTPUT_FILE = DATA_DIR / "result_news.json"
+REJECTED_FILE = DATA_DIR / "rejected_news.json"
+IMAGES_DIR = DATA_DIR / "processed_images"
+CACHE_FILE = DATA_DIR / "gemini_cache.json"
 
 # Rate limiting / delays
 GLOBAL_DELAY = float(os.getenv("GLOBAL_DELAY", "12"))  # сек между вызовами к Gemini
@@ -352,9 +352,9 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
 
 # --- Основная логика ---
 def main():
-    input_path = Path(__file__).parent.parent / INPUT_FILE
-    output_path = Path(__file__).parent.parent / OUTPUT_FILE
-    rejected_path = Path(__file__).parent.parent / REJECTED_FILE
+    input_path = INPUT_FILE
+    output_path = OUTPUT_FILE
+    rejected_path = REJECTED_FILE
 
     if not input_path.exists():
         print(f"❌ Файл {INPUT_FILE} не найден.")

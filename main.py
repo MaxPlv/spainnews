@@ -174,6 +174,9 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 
+    # Отметка версии сборки — сразу видно, какой коммит реально запущен
+    commit = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or "unknown"
+    print(f"🏷  Версия сборки (commit): {commit[:7]}", flush=True)
     print("🌟 Запуск системы автоматической обработки новостей", flush=True)
     print("📅 Расписание: каждые 2 часа", flush=True)
     print("🤖 Бот будет работать постоянно и обрабатывать кнопки\n", flush=True)

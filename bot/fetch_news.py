@@ -4,6 +4,9 @@ from dateutil import parser as dateparser
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 from url_tracker import URLTracker
+from paths import DATA_DIR
+
+NEWS_RAW_FILE = DATA_DIR / "news_raw.json"
 
 # RSS источники
 RSS_FEEDS = [
@@ -327,10 +330,10 @@ if __name__ == "__main__":
         print()
 
     # Сохраняем отфильтрованные новости (перезапись файла)
-    with open("news_raw.json", "w", encoding="utf-8") as f:
+    with open(NEWS_RAW_FILE, "w", encoding="utf-8") as f:
         json.dump(filtered_news, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Сохранено {len(filtered_news)} новостей в news_raw.json")
+    print(f"✅ Сохранено {len(filtered_news)} новостей в {NEWS_RAW_FILE}")
     
     # Финальная статистика
     stats = url_tracker.get_stats()
