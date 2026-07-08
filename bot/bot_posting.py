@@ -4,13 +4,13 @@ import time
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from bot.published_news_tracker import check_duplicate, add_published_news
 from bot.categories import category_emoji, category_label, CATEGORY_ORDER
 from bot.digest_buffer import add_to_digest, load_pending, clear_pending, pending_count
+from bot.paths import DATA_DIR
 
 # Загрузка ключей
 load_dotenv()
@@ -53,11 +53,9 @@ def in_quiet_hours(now=None):
         return QUIET_START <= h < QUIET_END
     return h >= QUIET_START or h < QUIET_END
 
-# Определяем корневую директорию проекта
-PROJECT_ROOT = Path(__file__).parent.parent
-RESULT_NEWS_FILE = PROJECT_ROOT / "result_news.json"
-REJECTED_NEWS_FILE = PROJECT_ROOT / "rejected_news.json"
-SETTINGS_FILE = PROJECT_ROOT / "settings.json"
+RESULT_NEWS_FILE = DATA_DIR / "result_news.json"
+REJECTED_NEWS_FILE = DATA_DIR / "rejected_news.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 # Загружаем новости
 def load_news():

@@ -3,14 +3,14 @@
 
 Срочные новости публикуются сразу отдельными постами, а всё остальное
 копится здесь между слотами публикации и уходит одним постом-дайджестом.
-Хранилище — pending_digest.json в корне проекта.
+Хранилище — pending_digest.json в DATA_DIR.
 """
 import json
-from pathlib import Path
 from difflib import SequenceMatcher
 
-PROJECT_ROOT = Path(__file__).parent.parent
-PENDING_FILE = PROJECT_ROOT / "pending_digest.json"
+from bot.paths import DATA_DIR
+
+PENDING_FILE = DATA_DIR / "pending_digest.json"
 
 # Порог схожести заголовков для отсечения дублей внутри буфера
 BUFFER_DUP_THRESHOLD = 0.8

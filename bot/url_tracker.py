@@ -1,7 +1,8 @@
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import List, Dict
+
+from paths import DATA_DIR
 
 
 class URLTracker:
@@ -9,17 +10,15 @@ class URLTracker:
     Класс для отслеживания URL новостей и предотвращения дубликатов.
     Автоматически очищает записи старше 24 часов.
     """
-    
+
     def __init__(self, storage_file: str = "news_urls.json"):
         """
         Инициализация трекера URL
-        
+
         Args:
-            storage_file: Путь к JSON файлу для хранения URL (относительно корня проекта)
+            storage_file: Путь к JSON файлу для хранения URL (относительно DATA_DIR)
         """
-        # Определяем путь к файлу относительно корня проекта
-        project_root = Path(__file__).parent.parent
-        self.storage_path = project_root / storage_file
+        self.storage_path = DATA_DIR / storage_file
         
         # Создаём файл если не существует
         if not self.storage_path.exists():

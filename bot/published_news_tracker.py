@@ -2,14 +2,12 @@
 Модуль для отслеживания опубликованных новостей и предотвращения дубликатов
 """
 import json
-import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from difflib import SequenceMatcher
 
+from bot.paths import DATA_DIR
 
-PROJECT_ROOT = Path(__file__).parent.parent
-PUBLISHED_NEWS_FILE = PROJECT_ROOT / "published_news.json"
+PUBLISHED_NEWS_FILE = DATA_DIR / "published_news.json"
 HISTORY_DAYS = 14  # Хранить историю за последние 14 дней
 
 
