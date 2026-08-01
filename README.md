@@ -20,6 +20,10 @@ TELEGRAM_CHANNEL_ID=@ваш_канал
 ADMIN_CHAT_ID=ваш_chat_id
 GEMINI_API_KEY=ваш_ключ_gemini
 
+# --- Временная замена AI-провайдера (см. раздел "Смена AI-провайдера") ---
+# AI_PROVIDER=openrouter
+# OPENROUTER_API_KEY=ваш_ключ_openrouter
+
 # --- Необязательные (у всех есть значения по умолчанию) ---
 # Порог важности: новости с importance >= этого значения публикуются сразу
 URGENT_THRESHOLD=8
@@ -176,6 +180,28 @@ scheduler.add_job(..., trigger=CronTrigger(hour="9,15,21", minute="0"))
 scheduler.add_job(..., trigger=CronTrigger(hour="*/6"))
 ```
 
+## 🔀 Смена AI-провайдера (Gemini ↔ OpenRouter)
+
+Если доступ к Google API заблокирован, можно временно переключить обработку
+новостей на [OpenRouter](https://openrouter.ai/) (единый API к моделям
+OpenAI, Anthropic, Meta, Mistral и др.) без изменения кода — всё через `.env`:
+
+```env
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=ваш_ключ_с_openrouter.ai/keys
+```
+
+- По умолчанию (`AI_PROVIDER` не задан или `gemini`) используется Gemini, как раньше.
+- При `AI_PROVIDER=openrouter` модуль `bot/process_ai.py` отправляет запросы через
+  `https://openrouter.ai/api/v1/chat/completions`, перебирая модели из fallback-списка
+  (`google/gemini-2.5-flash-lite` — та же модель, что использовалась напрямую через Gemini,
+  но через инфраструктуру OpenRouter; далее `openai/gpt-4o-mini`, `anthropic/claude-3.5-haiku`,
+  `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.1-24b-instruct`) —
+  можно поправить список в `MODEL_FALLBACKS` внутри `process_ai.py`, если нужны другие модели.
+- Чтобы вернуться на Gemini, просто удалите/закомментируйте `AI_PROVIDER=openrouter` в `.env`.
+- Кэш ответов (`gemini_cache.json`) общий для обоих провайдеров и ключуется по хэшу текста
+  статьи + версии промпта, так что переключение не ломает уже закешированные новости.
+
 ## 🐛 Решение проблем
 
 ### Бот не отправляет новости
@@ -183,8 +209,8 @@ scheduler.add_job(..., trigger=CronTrigger(hour="*/6"))
 - Убедитесь, что вы написали боту хотя бы раз `/start`
 
 ### Ошибка при обработке AI
-- Проверьте `GEMINI_API_KEY`
-- Убедитесь, что у вас есть квота на API
+- Проверьте `GEMINI_API_KEY` (или `OPENROUTER_API_KEY`, если включён `AI_PROVIDER=openrouter`)
+- Убедитесь, что у вас есть квота/баланс на выбранном сервисе
 
 ### Новости не собираются
 - Проверьте интернет-соединение

@@ -13,7 +13,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-# --- Google GenAI SDK Imports ---
+# --- Google GenAI SDK Imports (используется только при AI_PROVIDER=gemini) ---
 from google import genai
 from google.genai import types
 # --------------------------------
@@ -35,10 +35,18 @@ def load_env_file():
 
 load_env_file()
 
-# Загрузка ключа
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise Exception("Установите переменную GEMINI_API_KEY")
+# Провайдер AI: "gemini" (по умолчанию) или "openrouter" (временная замена,
+# когда доступ к Google API недоступен — см. README).
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()
+
+if AI_PROVIDER == "openrouter":
+    API_KEY = os.getenv("OPENROUTER_API_KEY")
+    if not API_KEY:
+        raise Exception("Установите переменную OPENROUTER_API_KEY")
+else:
+    API_KEY = os.getenv("GEMINI_API_KEY")
+    if not API_KEY:
+        raise Exception("Установите переменную GEMINI_API_KEY")
 
 # Настройки (можно подправить)
 DUPLICATE_THRESHOLD = 0.8
@@ -67,19 +75,30 @@ IMAGES_DIR = DATA_DIR / "processed_images"
 CACHE_FILE = DATA_DIR / "gemini_cache.json"
 
 # Rate limiting / delays
-GLOBAL_DELAY = float(os.getenv("GLOBAL_DELAY", "12"))  # сек между вызовами к Gemini
+GLOBAL_DELAY = float(os.getenv("GLOBAL_DELAY", "12"))  # сек между вызовами к модели
 BASE_RETRY_DELAY = 5  # базовая задержка для экспоненциального backoff
 MAX_RETRIES = 5
 
 # Модели в порядке приоритета (fallback-ready)
-# Используем только существующие модели
-MODEL_FALLBACKS = [
-    "gemini-2.5-flash-lite",   # Ультра-быстрая и бюджетная модель (отлично для квот)
-    "gemini-2.5-flash",        # Быстрая, актуальная и рекомендуемая модель
-    "gemini-2.5-pro",          # Самая мощная модель для сложных задач (второй приоритет)
-    "gemini-2.0-flash",        # Предыдущая стабильная версия (как запасной вариант)
-    "gemini-1.0-pro"           # Самая стабильная, предыдущая версия Pro (резерв)
-]
+if AI_PROVIDER == "openrouter":
+    # Модели через OpenRouter (https://openrouter.ai/models) — не зависят от
+    # заблокированного Google API, т.к. используют собственную инфраструктуру OpenRouter.
+    MODEL_FALLBACKS = [
+        "google/gemini-2.5-flash-lite",   # та же модель, что была на Gemini, но через OpenRouter
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-haiku",
+        "meta-llama/llama-3.3-70b-instruct",
+        "mistralai/mistral-small-3.1-24b-instruct",
+    ]
+else:
+    # Используем только существующие модели Gemini
+    MODEL_FALLBACKS = [
+        "gemini-2.5-flash-lite",   # Ультра-быстрая и бюджетная модель (отлично для квот)
+        "gemini-2.5-flash",        # Быстрая, актуальная и рекомендуемая модель
+        "gemini-2.5-pro",          # Самая мощная модель для сложных задач (второй приоритет)
+        "gemini-2.0-flash",        # Предыдущая стабильная версия (как запасной вариант)
+        "gemini-1.0-pro"           # Самая стабильная, предыдущая версия Pro (резерв)
+    ]
 
 # Подготовка директорий
 os.makedirs(IMAGES_DIR, exist_ok=True)
@@ -175,8 +194,49 @@ def save_cache(cache):
     except Exception as e:
         print(f"   ⚠️ Не удалось сохранить кэш: {e}")
 
-# --- Инициализация глобального клиента ---
-client = genai.Client(api_key=API_KEY)
+# --- Инициализация глобального клиента (только для Gemini) ---
+client = genai.Client(api_key=API_KEY) if AI_PROVIDER != "openrouter" else None
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def call_ai_model(model, prompt):
+    """Делает один запрос к модели выбранного провайдера, возвращает текст ответа."""
+    if AI_PROVIDER == "openrouter":
+        resp = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "max_tokens": 800,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+        if not text:
+            raise Exception("No text in response from model")
+        return text
+    else:
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.4,
+                max_output_tokens=800,
+                response_mime_type="application/json"
+            )
+        )
+        if hasattr(response, "text") and response.text:
+            return response.text
+        raise Exception("No text in response from model")
 
 def parse_json_from_text(text):
     """
@@ -286,22 +346,9 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
             if attempt > 0:
                 print(f"   🔁 Retry {attempt}/{max_retries}, trying model={model}")
             # Генерация
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.4,
-                    max_output_tokens=800,
-                    response_mime_type="application/json"
-                )
-            )
-            text = ""
-            if hasattr(response, "text") and response.text:
-                text = response.text
-            else:
-                raise Exception("No text in response from model")
+            text = call_ai_model(model, prompt)
 
-            print(f"   📨 Gemini response length: {len(text)} chars")
+            print(f"   📨 {AI_PROVIDER} response length: {len(text)} chars")
             print(f"   📝 First 300 chars of raw response: {text[:300]}")
 
             text = clean_ai_response(text)
@@ -346,7 +393,7 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
         except Exception as e:
             last_error = str(e)
             le = last_error.lower()
-            print(f"   ⚠️  Gemini error (model={model}): {last_error[:300]}")
+            print(f"   ⚠️  {AI_PROVIDER} error (model={model}): {last_error[:300]}")
             print(f"   📋 Error traceback:")
             traceback.print_exc()
 
@@ -375,7 +422,7 @@ def gemini_request_single_json(article_text, max_retries=MAX_RETRIES, base_delay
             # перейдём к следующему повтору (включая смену модели согласно индексам)
 
     # Если все попытки исчерпаны
-    raise Exception(f"Gemini failed after {max_retries} retries. Last error: {last_error}")
+    raise Exception(f"{AI_PROVIDER} failed after {max_retries} retries. Last error: {last_error}")
 
 # --- Основная логика ---
 def main():
@@ -429,16 +476,16 @@ def main():
 
             text_for_model = (title + ". " + (article_content or description or title))[:MAX_MODEL_INPUT_CHARS]
 
-            # Минимальная задержка между вызовами к Gemini
-            print(f"   💤 Ждём {GLOBAL_DELAY}s перед запросом к Gemini (глобальный rate limit)")
+            # Минимальная задержка между вызовами к модели
+            print(f"   💤 Ждём {GLOBAL_DELAY}s перед запросом к {AI_PROVIDER} (глобальный rate limit)")
             time.sleep(GLOBAL_DELAY)
 
-            print(f"   🤖 Отправляем запрос к Gemini...")
+            print(f"   🤖 Отправляем запрос к {AI_PROVIDER}...")
             try:
                 ai_result = gemini_request_single_json(text_for_model)
-                print(f"   ✨ Получен ответ от Gemini: title_ru={bool(ai_result.get('title_ru'))}, bullets={len(ai_result.get('bullets', []))}, importance={ai_result.get('importance')}, category={ai_result.get('category')}, hashtags_count={len(ai_result.get('hashtags', []))}")
+                print(f"   ✨ Получен ответ от {AI_PROVIDER}: title_ru={bool(ai_result.get('title_ru'))}, bullets={len(ai_result.get('bullets', []))}, importance={ai_result.get('importance')}, category={ai_result.get('category')}, hashtags_count={len(ai_result.get('hashtags', []))}")
             except Exception as e:
-                print(f"   ❌ Проблема с Gemini: {e}")
+                print(f"   ❌ Проблема с {AI_PROVIDER}: {e}")
                 print(f"   📋 Full traceback:")
                 traceback.print_exc()
                 rejected_news.append({"title": title, "reason": f"gemini_error: {str(e)}"})
